@@ -49,6 +49,10 @@ func init() {
 	gemini := compatible
 	gemini.buildURL = BuildGeminiChannelURL
 	gemini.setAuth = func(request *http.Request, channel model.ModelChannel) {
+		if isTurboGeminiEndpoint(channel) {
+			compatible.setAuth(request, channel)
+			return
+		}
 		request.Header.Set("x-goog-api-key", channel.APIKey)
 	}
 	gemini.models = fetchGeminiAdminChannelModels

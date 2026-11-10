@@ -139,6 +139,51 @@ func TestModelProtocolGenerationTestPrecedence(t *testing.T) {
 	}
 }
 
+func TestAdminImageModelUsesCatalog(t *testing.T) {
+	tests := []struct {
+		name, protocol, baseURL, model string
+		capabilities                   map[string]string
+		listed                         bool
+	}{
+		{"OpenAI image", "openai", "https://upstream.invalid", "gemini-3-pro-image-sp", nil, true},
+		{"classified image alias", "openai", "https://upstream.invalid", "product-renderer", map[string]string{"product-renderer": "image"}, true},
+		{"Turbo Gemini image", "gemini", "https://turbo-api.com/v1", "gemini-3-pro-image-sp", nil, true},
+		{"missing image model", "openai", "https://upstream.invalid", "other-image", nil, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			stubProtocolAdminHTTP(t, func(request *http.Request) (*http.Response, error) {
+				calls++
+				if request.Method != http.MethodGet || request.URL.Path != "/v1/models" || request.Header.Get("Authorization") != "Bearer test-key" {
+					t.Errorf("unexpected catalog request: %s %s", request.Method, request.URL)
+				}
+				return protocolAdminResponse(`{"data":[{"id":"gemini-3-pro-image-sp"},{"id":"product-renderer"}]}`), nil
+			})
+			channel := model.ModelChannel{Protocol: test.protocol, BaseURL: test.baseURL, APIKey: "test-key", ModelCapabilities: test.capabilities}
+			got, err := AdminTestChannelModel(nil, channel, test.model)
+			if calls != 1 || test.listed != (err == nil) {
+				t.Fatalf("got %q, %v, %d calls", got, err, calls)
+			}
+		})
+	}
+}
+
+func TestTurboGeminiUsesNativePathAndBearer(t *testing.T) {
+	for _, test := range []struct{ baseURL, path, bearer, googleKey string }{
+		{"https://turbo-api.com/v1", "/v1beta/models/gemini-3-pro-image-sp:generateContent", "Bearer test-key", ""},
+		{"https://turbo-api.com.example/v1", "/v1/v1beta/models/gemini-3-pro-image-sp:generateContent", "", "test-key"},
+	} {
+		channel := model.ModelChannel{Protocol: "gemini", BaseURL: test.baseURL, APIKey: "test-key"}
+		endpoint := BuildModelChannelURL(channel, GeminiModelActionPath("gemini-3-pro-image-sp", "generateContent"))
+		request := httptest.NewRequest(http.MethodPost, endpoint, nil)
+		SetModelChannelAuthHeader(request, channel)
+		if request.URL.Path != test.path || request.Header.Get("Authorization") != test.bearer || request.Header.Get("x-goog-api-key") != test.googleKey {
+			t.Errorf("%s produced an unexpected path or authentication method", test.baseURL)
+		}
+	}
+}
+
 type protocolAdminTransport func(*http.Request) (*http.Response, error)
 
 func (transport protocolAdminTransport) RoundTrip(request *http.Request) (*http.Response, error) {

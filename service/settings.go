@@ -11,8 +11,8 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
-	"sort"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -747,6 +747,9 @@ func testAdminChannelModel(channel model.ModelChannel, modelName string) (string
 }
 
 func testOpenAIChannelModel(channel model.ModelChannel, modelName string) (string, error) {
+	if isAdminImageModel(channel, modelName) {
+		return testAdminImageModelCatalog(channel, modelName)
+	}
 	body, _ := json.Marshal(map[string]any{
 		"model": modelName,
 		"messages": []map[string]string{{
@@ -783,7 +786,34 @@ func testOpenAIChannelModel(channel model.ModelChannel, modelName string) (strin
 	return "ok", nil
 }
 
+func isAdminImageModel(channel model.ModelChannel, modelName string) bool {
+	if capability := channel.ModelCapabilities[modelName]; capability != "" {
+		return capability == "image"
+	}
+	return isImageModelName(modelName)
+}
+
+func testAdminImageModelCatalog(channel model.ModelChannel, modelName string) (string, error) {
+	loadModels := fetchOpenAIAdminChannelModels
+	if IsGeminiChannel(channel) {
+		loadModels = fetchGeminiAdminChannelModels
+	}
+	models, err := loadModels(channel)
+	if err != nil {
+		return "", err
+	}
+	if !slices.Contains(models, modelName) && !slices.Contains(models, strings.TrimPrefix(modelName, "models/")) {
+		return "", safeMessageError{message: "渠道模型列表未返回该生图模型，请检查模型 ID 和权限。"}
+	}
+	return "渠道模型列表已确认包含该生图模型，请在生图工作台验证实际生成。", nil
+}
+
 func fetchGeminiAdminChannelModels(channel model.ModelChannel) ([]string, error) {
+	if isTurboGeminiEndpoint(channel) {
+		channel.BaseURL = BuildGeminiChannelURL(channel, "")
+		channel.Protocol = ModelChannelProtocolOpenAI
+		return fetchOpenAIAdminChannelModels(channel)
+	}
 	result := []string{}
 	pageToken := ""
 	for {
@@ -844,6 +874,9 @@ func fetchGeminiAdminChannelModels(channel model.ModelChannel) ([]string, error)
 }
 
 func testGeminiChannelModel(channel model.ModelChannel, modelName string) (string, error) {
+	if isTurboGeminiEndpoint(channel) && isAdminImageModel(channel, modelName) {
+		return testAdminImageModelCatalog(channel, modelName)
+	}
 	lowerModel := strings.ToLower(strings.TrimSpace(modelName))
 	if strings.HasPrefix(lowerModel, "veo-") || strings.Contains(lowerModel, "image") || strings.Contains(lowerModel, "tts") {
 		return "模型列表与渠道配置有效；图片、视频和语音模型未执行付费生成测试。", nil

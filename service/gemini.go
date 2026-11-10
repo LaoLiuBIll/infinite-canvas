@@ -15,6 +15,11 @@ func IsGeminiChannel(channel model.ModelChannel) bool {
 	return strings.EqualFold(strings.TrimSpace(channel.Protocol), ModelChannelProtocolGemini)
 }
 
+func isTurboGeminiEndpoint(channel model.ModelChannel) bool {
+	endpoint, err := url.Parse(strings.TrimSpace(channel.BaseURL))
+	return err == nil && endpoint.Scheme == "https" && strings.EqualFold(endpoint.Hostname(), "turbo-api.com")
+}
+
 func GeminiModelActionPath(modelName string, action string) string {
 	modelName = strings.TrimPrefix(strings.TrimSpace(modelName), "models/")
 	return "/v1beta/models/" + url.PathEscape(modelName) + ":" + action
@@ -27,8 +32,11 @@ func GeminiOperationPath(operation string) string {
 
 func BuildGeminiChannelURL(channel model.ModelChannel, path string) string {
 	baseURL := strings.TrimRight(strings.TrimSpace(channel.BaseURL), "/")
-	if strings.HasSuffix(strings.ToLower(baseURL), "/v1beta") {
+	lowerBaseURL := strings.ToLower(baseURL)
+	if strings.HasSuffix(lowerBaseURL, "/v1beta") {
 		baseURL = baseURL[:len(baseURL)-len("/v1beta")]
+	} else if strings.HasSuffix(lowerBaseURL, "/v1") && isTurboGeminiEndpoint(channel) {
+		baseURL = baseURL[:len(baseURL)-len("/v1")]
 	}
 	return baseURL + path
 }
