@@ -19,7 +19,7 @@ type CanvasImageTask struct {
 	GenerationType  string   `json:"generationType" gorm:"size:32"`
 	Endpoint        string   `json:"endpoint" gorm:"size:191"`
 	ContentType     string   `json:"contentType" gorm:"size:191"`
-	RequestBody     string   `json:"requestBody" gorm:"type:text"`
+	RequestBody     string   `json:"requestBody"`
 	ResponseBody    string   `json:"responseBody"`
 	Error           string   `json:"error" gorm:"type:text"`
 	ErrorDetail     string   `json:"errorDetail" gorm:"type:text"`

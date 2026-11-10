@@ -13,6 +13,8 @@ description: 当前后端主要数据表与字段说明
 
 模型中的短字符串字段通过 `gorm:"size:N"` 明确最大长度，在 MySQL、PostgreSQL 中使用对应的 `varchar`；SQLite 仍使用 `text`。正文、JSON、URL 等长内容继续使用文本类型。
 
+成果历史的 `payload_json` 及图片、音频任务的 `request_body` 由驱动映射为大文本。在 MySQL 中使用 `LONGTEXT`，以容纳内嵌媒体和较长的请求摘要。
+
 支持的存储驱动：
 
 - `sqlite`

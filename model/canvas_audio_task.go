@@ -18,7 +18,7 @@ type CanvasAudioTask struct {
 	Prompt          string  `json:"prompt" gorm:"type:text"`
 	Endpoint        string  `json:"endpoint" gorm:"size:191"`
 	ContentType     string  `json:"contentType" gorm:"size:191"`
-	RequestBody     string  `json:"requestBody" gorm:"type:text"`
+	RequestBody     string  `json:"requestBody"`
 	ResponseBody    string  `json:"responseBody"`
 	Error           string  `json:"error" gorm:"type:text"`
 	ErrorDetail     string  `json:"errorDetail"`
