@@ -49,6 +49,8 @@ http://localhost:3000
 
 开发代理默认转发到 `http://127.0.0.1:8080`。如果你的后端端口不同，启动前设置 `API_BASE_URL`
 
+公开部署时，在 `web` 目录构建前端时设置 `INFINITE_CANVAS_SITE_URL` 为站点的公开地址，例如 `INFINITE_CANVAS_SITE_URL=https://example.com bun run build`。首页和配音工作台会使用该地址生成 canonical 和 JSON-LD。
+
 ## 常见场景
 
 - 改画布、页面和交互：主要看 `web/`

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [新增] 首页和配音工作台支持 canonical 和 JSON-LD 结构化数据
++ [调整] 移除站点公告中的 TokenDance 推广
 + [新增] 配音工作台支持使用后台语音模型按文案生成配音、试听和下载
 + [修复] 修复 Gemini 误将思考图作为正式结果
 + [修复] 修复 Grok2API 视频参考图 URL 强制被转换为 Base64
