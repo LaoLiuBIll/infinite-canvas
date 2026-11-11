@@ -1,411 +1,407 @@
 "use client";
 
-import { Copy, Download, PencilLine, Search, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Card, Drawer, Empty, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
+import { Alert, App, Button, Checkbox, Drawer, Empty, Input, Modal, Pagination, Progress, Segmented, Select, Spin, Tag } from "antd";
+import { AudioLines, Download, FileText, Film, FolderOpen, LayoutGrid, List, Plus, RotateCcw, Search, Trash2, Upload } from "lucide-react";
 import { saveAs } from "file-saver";
+import { nanoid } from "nanoid";
 
-import { useCopyText } from "@/hooks/use-copy-text";
-import { formatBytes } from "@/lib/image-utils";
-import { cn } from "@/lib/utils";
-import { useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
-import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { AssetFormModal } from "@/components/assets/asset-form-modal";
+import { formatBytes } from "@/lib/image-utils";
+import { fetchAssetReferences, type AssetReference } from "@/services/api/personal-assets";
+import { assetFromFile, assetKinds, assetMediaUrl, assetNeedsOriginalDevice, assetSearchText, assetStages, isAssetRecoverable, readAssetMedia } from "@/services/personal-asset-media";
+import { useAssetStore, type Asset, type AssetInput, type AssetPatch } from "@/stores/use-asset-store";
+import { useUserStore } from "@/stores/use-user-store";
+import { exportAssets, readAssetPackage } from "./asset-transfer";
 
-const kindOptions = [
-    { label: "全部", value: "all" },
-    { label: "文本", value: "text" },
-    { label: "图片", value: "image" },
-    { label: "视频", value: "video" },
-    { label: "音频", value: "audio" },
-];
+type UploadItem = { id: string; file: File; progress: number; asset?: AssetInput; done?: boolean; error?: string };
+const PAGE_SIZE = 24;
+
+const valuesOf = (items: (string | undefined)[]) => [...new Set(items.filter((item): item is string => Boolean(item)))].sort().map((value) => ({ value, label: value }));
+const errorText = (error: unknown) => error instanceof Error ? error.message : "操作失败，请重试";
+const folderOf = (asset: Asset) => asset.folder ?? asset.category ?? "";
+const dateText = (value: string) => new Date(value).toLocaleDateString("zh-CN");
+const kindText = (asset: Asset) => assetKinds.find((item) => item.value === asset.kind)?.label;
+const stageText = (asset: Asset) => assetStages.find((item) => item.value === asset.stage)?.label;
 
 export default function AssetsPage() {
-    const { message } = App.useApp();
-    const copyText = useCopyText();
-    const assetInputRef = useRef<HTMLInputElement>(null);
+    const { message, modal } = App.useApp();
+    const token = useUserStore((state) => state.user ? state.token : "");
     const assets = useAssetStore((state) => state.assets);
-    const addAsset = useAssetStore((state) => state.addAsset);
-    const removeAsset = useAssetStore((state) => state.removeAsset);
+    const deleted = useAssetStore((state) => state.trash);
+    const trash = useMemo(() => deleted.filter(isAssetRecoverable), [deleted]);
+    const loading = useAssetStore((state) => state.loading);
+    const loadError = useAssetStore((state) => state.loadError);
+    const guestAssets = useAssetStore((state) => state.guestAssets);
+    const [view, setView] = useState<"active" | "trash">("active");
+    const [layout, setLayout] = useState<"grid" | "list">("grid");
     const [keyword, setKeyword] = useState("");
-    const [kindFilter, setKindFilter] = useState<AssetKind | "all">("all");
-    const [categoryFilter, setCategoryFilter] = useState("");
-    const [tagFilters, setTagFilters] = useState<string[]>([]);
+    const [kind, setKind] = useState<string>();
+    const [sku, setSKU] = useState<string>();
+    const [folder, setFolder] = useState<string>();
+    const [source, setSource] = useState<string>();
+    const [tags, setTags] = useState<string[]>([]);
+    const [stage, setStage] = useState<string>();
+    const [period, setPeriod] = useState<number>();
     const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState(12);
-    const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
-    const [isAssetOpen, setIsAssetOpen] = useState(false);
-    const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
-    const [deletingAsset, setDeletingAsset] = useState<Asset | null>(null);
-    const validAssets = useMemo(() => assets.filter((asset) => asset.kind === "text" || asset.kind === "image" || asset.kind === "video" || asset.kind === "audio"), [assets]);
-    const categories = useMemo(() => Array.from(new Set(validAssets.flatMap((asset) => asset.category ? [asset.category] : []))), [validAssets]);
-    const tags = useMemo(() => Array.from(new Set(validAssets.flatMap((asset) => asset.tags))), [validAssets]);
-
-    const filteredAssets = useMemo(() => {
+    const [selected, setSelected] = useState<string[]>([]);
+    const [detail, setDetail] = useState<Asset | null>(null);
+    const [editing, setEditing] = useState<Asset | null>();
+    const [batch, setBatch] = useState<AssetPatch | null>(null);
+    const [savingBatch, setSavingBatch] = useState(false);
+    const [uploadOpen, setUploadOpen] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [uploads, setUploads] = useState<UploadItem[]>([]);
+    const [uploadFields, setUploadFields] = useState({ sku: "", folder: "", tags: [] as string[] });
+    const [busy, setBusy] = useState(false);
+    const filesRef = useRef<HTMLInputElement>(null);
+    const zipRef = useRef<HTMLInputElement>(null);
+    const rows = view === "trash" ? trash : assets;
+    const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
-        return validAssets.filter((asset) => {
-            if (kindFilter !== "all" && asset.kind !== kindFilter) return false;
-            if (categoryFilter && asset.category !== categoryFilter) return false;
-            if (tagFilters.length && !tagFilters.some((tag) => asset.tags.includes(tag))) return false;
-            if (!query) return true;
-            return assetSearchText(asset).includes(query);
-        });
-    }, [validAssets, keyword, kindFilter, categoryFilter, tagFilters]);
-
-    const visibleAssets = useMemo(() => {
-        const start = (page - 1) * pageSize;
-        return filteredAssets.slice(start, start + pageSize);
-    }, [filteredAssets, page, pageSize]);
+        const cutoff = period ? Date.now() - period * 86_400_000 : 0;
+        return rows.filter((asset) =>
+            (!query || assetSearchText(asset).includes(query)) && (!kind || asset.kind === kind) &&
+            (!sku || asset.sku === sku) && (!folder || folderOf(asset) === folder) &&
+            (!source || asset.source === source) && (!stage || asset.stage === stage) &&
+            tags.every((tag) => asset.tags?.includes(tag)) && (!cutoff || Date.parse(asset.createdAt) >= cutoff));
+    }, [rows, keyword, kind, sku, folder, source, stage, tags, period]);
+    const maxPage = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const visible = filtered.slice((Math.min(page, maxPage) - 1) * PAGE_SIZE, Math.min(page, maxPage) * PAGE_SIZE);
+    const chosen = filtered.filter((asset) => selected.includes(asset.id));
+    const activeDetail = detail && (rows.find((asset) => asset.id === detail.id) || detail);
+    const known = new Set([...assets, ...deleted].map((asset) => asset.id));
+    const localOnly = guestAssets.filter((asset) => !asset.deletedAt && !known.has(asset.id));
+    const folders = valuesOf(assets.map(folderOf));
 
     useEffect(() => {
-        const maxPage = Math.max(1, Math.ceil(filteredAssets.length / pageSize));
-        setPage((value) => Math.min(value, maxPage));
-    }, [filteredAssets.length, pageSize]);
+        setPage(1);
+        setSelected([]);
+    }, [view, keyword, kind, sku, folder, source, stage, tags, period]);
 
-    const openCreate = () => {
-        setEditingAsset(null);
-        setIsAssetOpen(true);
-    };
+    const changeSelection = (id: string, checked: boolean) => setSelected((items) => checked ? [...new Set([...items, id])] : items.filter((item) => item !== id));
 
-    const openEdit = (asset: Asset) => {
-        setEditingAsset(asset);
-        setIsAssetOpen(true);
-    };
-
-    const copyAssetText = async (asset: Asset) => {
-        if (asset.kind !== "text") return;
-        copyText(asset.data.content, "文本已复制");
-    };
-
-    const downloadAsset = (asset: Asset) => {
-        if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio") return;
-        const url = asset.kind === "image" ? asset.data.dataUrl : asset.data.url;
-        saveAs(url, `${asset.title || "asset"}.${asset.data.mimeType.split("/")[1] || "png"}`);
-    };
-
-    const exportAllAssets = async () => {
-        if (!validAssets.length) {
-            message.warning("暂无素材可导出");
-            return;
-        }
-        await exportAssets(validAssets);
-    };
-
-    const importAssetZip = async (file?: File) => {
-        if (!file) return;
+    const download = async (items: Asset[], zip = true) => {
+        setBusy(true);
         try {
-            const importedAssets = await readAssetPackage(file);
-            importedAssets.forEach((asset) => {
-                const payload = { ...asset } as Record<string, unknown>;
-                delete payload.id;
-                delete payload.createdAt;
-                delete payload.updatedAt;
-                addAsset(payload as Parameters<typeof addAsset>[0]);
-            });
-            message.success(`已导入 ${importedAssets.length} 个素材`);
-        } catch {
-            message.error("导入失败，请选择有效的素材压缩包");
+            if (zip) await exportAssets(items, token);
+            else {
+                const asset = items[0];
+                const blob = await readAssetMedia(asset, token);
+                const extension = asset.kind === "text" ? "txt" : blob.type.split("/")[1]?.split(";")[0]?.replace(/^mpeg$/, "mp3").replace(/^jpeg$/, "jpg");
+                saveAs(blob, extension && !/\.[a-z0-9]{2,5}$/i.test(asset.title) ? asset.title + "." + extension : asset.title);
+            }
+        } catch (error) {
+            message.error(errorText(error));
         } finally {
-            if (assetInputRef.current) assetInputRef.current.value = "";
+            setBusy(false);
         }
     };
 
-    const confirmDelete = () => {
-        if (!deletingAsset) return;
-        removeAsset(deletingAsset.id);
-        message.success("素材已删除");
-        setDeletingAsset(null);
+    const changeTrash = (items: Asset[], trashed: boolean) => {
+        const apply = async () => {
+            try {
+                await useAssetStore.getState().updateAssets(items.map((item) => item.id), { trashed });
+                setSelected([]);
+                setDetail(null);
+                message.success(trashed ? "已移入回收站" : "已恢复资产");
+            } catch (error) {
+                message.error(errorText(error));
+            }
+        };
+        if (trashed) modal.confirm({
+            title: `将 ${items.length} 项资产移入回收站？`,
+            content: "30 天内可恢复，已引用的画布仍可使用原文件。",
+            okText: "移入回收站",
+            cancelText: "取消",
+            onOk: apply,
+        });
+        else void apply();
+    };
+
+    const importZip = async (file?: File) => {
+        if (!file) return;
+        setBusy(true);
+        try {
+            const imported = await readAssetPackage(file);
+            for (const asset of imported) await useAssetStore.getState().addAsset(asset);
+            message.success(`已导入 ${imported.length} 项资产`);
+        } catch (error) {
+            message.error(errorText(error));
+        } finally {
+            setBusy(false);
+            if (zipRef.current) zipRef.current.value = "";
+        }
+    };
+
+    const migrate = async (items: Asset[]) => {
+        setBusy(true);
+        let saved = 0;
+        const failed: string[] = [];
+        try {
+            for (const asset of items) {
+                try {
+                    await useAssetStore.getState().migrateAsset(asset);
+                    saved++;
+                } catch {
+                    failed.push(asset.title);
+                }
+            }
+            if (failed.length) message.warning(`已迁移 ${saved} 项，${failed.length} 项原文件不可读取或上传失败`);
+            else message.success(`已迁移 ${saved} 项到账号`);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const queueFiles = (files: FileList | null) => {
+        if (!files || uploading) return;
+        setUploads((items) => [...items, ...Array.from(files, (file) => ({ id: nanoid(), file, progress: 0 }))]);
+    };
+
+    const uploadQueued = async () => {
+        const pending = uploads.filter((item) => !item.done);
+        setUploading(true);
+        let succeeded = 0;
+        const change = (id: string, patch: Partial<UploadItem>) => setUploads((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
+        try {
+            for (const item of pending) {
+                change(item.id, { error: "", progress: 0 });
+                try {
+                    const asset = item.asset || await assetFromFile(item.file, token, (progress) => change(item.id, { progress: Math.min(99, progress) }));
+                    change(item.id, { asset, progress: 99 });
+                    if (useUserStore.getState().token !== token) throw new Error("登录状态已变化，请重新打开上传窗口");
+                    await useAssetStore.getState().addAsset({ ...asset, sku: uploadFields.sku.trim(), folder: uploadFields.folder.trim(), tags: uploadFields.tags }, item.id);
+                    change(item.id, { progress: 100, done: true });
+                    succeeded++;
+                } catch (error) {
+                    change(item.id, { error: errorText(error) });
+                }
+            }
+            if (succeeded) message.success(`已上传 ${succeeded} 项资产`);
+        } finally {
+            setUploading(false);
+        }
+    };
+
+    const applyBatch = async () => {
+        if (!batch || !Object.keys(batch).length) return;
+        setSavingBatch(true);
+        try {
+            const { tags: addedTags, ...fields } = batch;
+            const patch: AssetPatch = {
+                ...fields,
+                ...(fields.sku !== undefined ? { sku: fields.sku.trim() } : {}),
+                ...(fields.folder !== undefined ? { folder: fields.folder.trim() } : {}),
+                ...(addedTags?.length ? { addTags: addedTags } : {}),
+            };
+            if (!Object.keys(patch).length) {
+                message.info("请填写要修改的内容");
+                return;
+            }
+            await useAssetStore.getState().updateAssets(chosen.map((asset) => asset.id), patch);
+            setBatch(null);
+            setSelected([]);
+            message.success("已更新所选资产");
+        } catch (error) {
+            message.error(errorText(error));
+        } finally {
+            setSavingBatch(false);
+        }
     };
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-background text-stone-900 dark:text-stone-100">
-            <main className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] px-6 py-8 [background-size:16px_16px] dark:bg-[radial-gradient(rgba(245,245,244,.14)_1px,transparent_1px)]">
-                <div className="pb-8">
-                    <div className="mx-auto max-w-5xl text-center">
-                        <h1 className="text-4xl font-semibold tracking-tight text-stone-950 dark:text-stone-100">我的素材</h1>
-                        <p className="mt-3 text-sm text-stone-500 dark:text-stone-400">收藏和管理常用素材，按类型、标题、分类和标签快速查找。</p>
+        <main className="h-full overflow-auto bg-background text-foreground">
+            <div className="mx-auto max-w-[1440px] px-4 py-6 sm:px-8">
+                <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-5">
+                    <div>
+                        <h1 className="text-2xl font-semibold">资产中心</h1>
+                        <p className="mt-1 text-sm text-muted-foreground">{token ? "按款号管理素材，在画布和工作台中复用。" : "当前素材保存在此浏览器。登录后可保存到账号并跨设备使用。"}</p>
                     </div>
+                    <div className="flex flex-wrap gap-2">
+                        <Button href="/asset-library">公共素材库</Button>
+                        <Button loading={busy} onClick={() => zipRef.current?.click()}>导入 ZIP</Button>
+                        <Button icon={<Plus size={15} />} onClick={() => setEditing(null)}>新增单项</Button>
+                        <Button type="primary" icon={<Upload size={15} />} onClick={() => { setUploads([]); setUploadFields({ sku: sku || "", folder: folder || "", tags: [] }); setUploadOpen(true); }}>批量上传</Button>
+                        <input ref={zipRef} type="file" accept=".zip" hidden onChange={(event) => void importZip(event.target.files?.[0])} />
+                    </div>
+                </header>
 
-                    <div className="mx-auto mt-8 w-full max-w-2xl">
-                        <Input.Search
-                            className="w-full"
-                            size="large"
-                            allowClear
-                            prefix={<Search className="size-4 text-stone-400" />}
-                            value={keyword}
-                            placeholder="搜索标题、内容、分类、标签或来源"
-                            onChange={(event) => {
-                                setPage(1);
-                                setKeyword(event.target.value);
-                            }}
-                            onSearch={(value) => {
-                                setPage(1);
-                                setKeyword(value);
-                            }}
-                        />
-                    </div>
+                {loadError && <Alert className="mt-4" type="error" showIcon title={loadError} action={<Button size="small" onClick={() => void useAssetStore.getState().load()}>重试</Button>} />}
+                {token && localOnly.length > 0 && <Alert className="mt-4" type="info" showIcon title={`此浏览器有 ${localOnly.length} 项本地素材`} action={<Button size="small" loading={busy} onClick={() => modal.confirm({ title: "将此浏览器的本地素材保存到当前账号？", okText: "迁移", cancelText: "取消", onOk: () => migrate(localOnly) })}>迁移到账号</Button>} />}
 
-                    <div className="mx-auto mt-6 grid max-w-6xl gap-3 text-left">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="grid gap-2 sm:grid-cols-[56px_minmax(0,1fr)] sm:items-center">
-                                <div className="text-xs font-medium text-stone-500 dark:text-stone-400">类型</div>
-                                <div className="flex flex-wrap gap-2">
-                                    {kindOptions.map((option) => (
-                                        <Tag.CheckableTag
-                                            key={option.value}
-                                            checked={kindFilter === option.value}
-                                            className={cn("prompt-filter-tag", kindFilter === option.value && "is-active")}
-                                            onChange={() => {
-                                                setPage(1);
-                                                setKindFilter(option.value as AssetKind | "all");
-                                            }}
-                                        >
-                                            {option.label}
-                                        </Tag.CheckableTag>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="flex flex-wrap gap-4">
-                                <button
-                                    type="button"
-                                    className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
-                                    onClick={() => void exportAllAssets()}
-                                >
-                                    导出素材
-                                </button>
-                                <button
-                                    type="button"
-                                    className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
-                                    onClick={() => assetInputRef.current?.click()}
-                                >
-                                    导入素材
-                                </button>
-                                <button
-                                    type="button"
-                                    className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
-                                    onClick={openCreate}
-                                >
-                                    新增素材
-                                </button>
-                            </div>
-                        </div>
-                        <div className="grid gap-2 sm:grid-cols-[56px_minmax(0,1fr)] sm:items-center">
-                            <div className="text-xs font-medium text-stone-500 dark:text-stone-400">分类</div>
-                            <div className="thin-scrollbar flex max-h-[112px] flex-wrap gap-2 overflow-y-auto pr-1">
-                                {["", ...categories].map((category) => (
-                                    <Tag.CheckableTag key={category || "all"} checked={categoryFilter === category} className={cn("prompt-filter-tag", categoryFilter === category && "is-active")} onChange={() => {
-                                        setPage(1);
-                                        setCategoryFilter(category);
-                                    }}>
-                                        {category || "全部"}
-                                    </Tag.CheckableTag>
-                                ))}
-                            </div>
-                        </div>
-                        <div className="grid gap-2 sm:grid-cols-[56px_minmax(0,1fr)] sm:items-center">
-                            <div className="text-xs font-medium text-stone-500 dark:text-stone-400">标签</div>
-                            <div className="thin-scrollbar flex max-h-[112px] flex-wrap gap-2 overflow-y-auto pr-1">
-                                <Tag.CheckableTag checked={tagFilters.length === 0} className={cn("prompt-filter-tag", tagFilters.length === 0 && "is-active")} onChange={() => {
-                                    setPage(1);
-                                    setTagFilters([]);
-                                }}>
-                                    全部
-                                </Tag.CheckableTag>
-                                {tags.map((tag) => (
-                                    <Tag.CheckableTag key={tag} checked={tagFilters.includes(tag)} className={cn("prompt-filter-tag", tagFilters.includes(tag) && "is-active")} onChange={() => {
-                                        setPage(1);
-                                        setTagFilters((items) => items.includes(tag) ? items.filter((item) => item !== tag) : [...items, tag]);
-                                    }}>
-                                        {tag}
-                                    </Tag.CheckableTag>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
+                <div className="my-4 flex flex-wrap items-center justify-between gap-2">
+                    <Segmented<"active" | "trash"> value={view} onChange={(value) => { setView(value); setDetail(null); }} options={[{ label: `全部资产 ${assets.length}`, value: "active" }, { label: `回收站 ${trash.length}`, value: "trash" }]} />
+                    <Segmented value={layout} onChange={setLayout} options={[{ label: <span aria-label="网格视图"><LayoutGrid size={16} /></span>, value: "grid" }, { label: <span aria-label="列表视图"><List size={16} /></span>, value: "list" }]} />
                 </div>
-
-                <div className="mx-auto flex max-w-7xl flex-col gap-5">
-                    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {visibleAssets.map((asset) => (
-                            <AssetCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadAsset} onDelete={() => setDeletingAsset(asset)} />
-                        ))}
-                    </div>
-
-                    {!visibleAssets.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有找到素材" className="py-20" /> : null}
-
-                    <div className="flex justify-center">
-                        <Pagination
-                            current={page}
-                            pageSize={pageSize}
-                            total={filteredAssets.length}
-                            showSizeChanger
-                            pageSizeOptions={[12, 24, 48, 96]}
-                            onChange={(nextPage, nextPageSize) => {
-                                setPage(nextPage);
-                                setPageSize(nextPageSize);
-                            }}
-                        />
-                    </div>
+                <div className="flex flex-wrap gap-2 rounded-xl border border-border bg-card p-3">
+                    <Input aria-label="搜索资产" className="max-w-[260px]" allowClear prefix={<Search size={15} />} placeholder="搜索名称、款号、文案" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
+                    <Select aria-label="类型" className="min-w-26" allowClear placeholder="类型" options={[...assetKinds]} value={kind} onChange={setKind} />
+                    <Select aria-label="完整款号" className="min-w-34" showSearch allowClear placeholder="完整款号" options={valuesOf(rows.map((asset) => asset.sku))} value={sku} onChange={setSKU} />
+                    <Select aria-label="文件夹" className="min-w-28" showSearch allowClear placeholder="文件夹" options={valuesOf(rows.map(folderOf))} value={folder} onChange={setFolder} />
+                    <Select aria-label="来源" className="min-w-26" allowClear placeholder="来源" options={valuesOf(rows.map((asset) => asset.source))} value={source} onChange={setSource} />
+                    <Select aria-label="用途" className="min-w-26" allowClear placeholder="用途" options={[...assetStages]} value={stage} onChange={setStage} />
+                    <Select aria-label="时间" className="min-w-28" allowClear placeholder="入库时间" options={[{ value: 7, label: "近 7 天" }, { value: 30, label: "近 30 天" }]} value={period} onChange={setPeriod} />
+                    <Select aria-label="标签" mode="multiple" maxTagCount="responsive" className="min-w-30 max-w-60" allowClear placeholder="标签" options={valuesOf(rows.flatMap((asset) => asset.tags || []))} value={tags} onChange={setTags} />
                 </div>
-            </main>
+                <div className="my-4 flex min-h-8 flex-wrap items-center gap-2 text-sm">
+                    <Checkbox checked={visible.length > 0 && visible.every((asset) => selected.includes(asset.id))} disabled={!visible.length}
+                        onChange={(event) => setSelected((items) => event.target.checked ? [...new Set([...items, ...visible.map((asset) => asset.id)])] : items.filter((id) => !visible.some((asset) => asset.id === id)))}>全选本页</Checkbox>
+                    <span className="text-muted-foreground">{chosen.length ? `已选 ${chosen.length} 项` : `共 ${filtered.length} 项`}</span>
+                    {chosen.length > 0 && (view === "trash"
+                        ? <Button size="small" icon={<RotateCcw size={14} />} onClick={() => changeTrash(chosen, false)}>批量恢复</Button>
+                        : <>
+                            <Button size="small" onClick={() => setBatch({})}>批量整理</Button>
+                            <Button size="small" loading={busy} icon={<Download size={14} />} onClick={() => void download(chosen)}>打包下载</Button>
+                            <Button size="small" danger icon={<Trash2 size={14} />} onClick={() => changeTrash(chosen, true)}>移入回收站</Button>
+                        </>)}
+                    {view === "active" && !chosen.length && filtered.length > 0 && <Button size="small" loading={busy} onClick={() => void download(filtered)}>导出筛选结果</Button>}
+                </div>
+                <Spin spinning={loading}>
+                    {visible.length ? (
+                        <div className={layout === "grid" ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" : "space-y-2"}>
+                            {visible.map((asset) => (
+                                <article key={asset.id} className={`relative overflow-hidden rounded-xl border bg-card ${selected.includes(asset.id) ? "border-primary" : "border-border"} ${layout === "list" ? "flex items-center gap-3 pl-10" : ""}`}>
+                                    <div className={`absolute z-10 ${layout === "list" ? "left-3 top-1/2 -translate-y-1/2" : "left-2 top-2 rounded-md bg-background/90 px-1"}`}>
+                                        <Checkbox aria-label={`选择 ${asset.title}`} checked={selected.includes(asset.id)} onChange={(event) => changeSelection(asset.id, event.target.checked)} />
+                                    </div>
+                                    <button type="button" aria-label={`查看 ${asset.title}`} onClick={() => setDetail(asset)}
+                                        className={layout === "list" ? "flex min-w-0 flex-1 items-center gap-3 text-left" : "block w-full text-left"}>
+                                        <div className={`grid shrink-0 place-items-center overflow-hidden bg-muted text-muted-foreground ${layout === "list" ? "h-14 w-18 rounded-md" : "aspect-video w-full"}`}>
+                                            <AssetCover asset={asset} />
+                                        </div>
+                                        <div className="min-w-0 flex-1 p-3">
+                                            <div className="truncate font-medium" title={asset.title}>{asset.title}</div>
+                                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                                                <span>{kindText(asset)}</span>
+                                                {asset.sku && <Tag className="m-0">{asset.sku}</Tag>}
+                                                {stageText(asset) && <span>{stageText(asset)}</span>}
+                                                {folderOf(asset) && <span className="inline-flex items-center gap-1"><FolderOpen size={12} />{folderOf(asset)}</span>}
+                                            </div>
+                                        </div>
+                                    </button>
+                                    {layout === "list" && <time className="hidden pr-4 text-xs text-muted-foreground sm:block">{dateText(asset.createdAt)}</time>}
+                                </article>
+                            ))}
+                        </div>
+                    ) : <Empty className="py-14" description={view === "trash" ? "回收站暂无资产" : assets.length ? "没有符合条件的资产" : "上传文件或从工作台保存生成结果"} />}
+                </Spin>
+                {maxPage > 1 && <Pagination className="mt-5 justify-end" current={Math.min(page, maxPage)} total={filtered.length} pageSize={PAGE_SIZE} showSizeChanger={false} onChange={setPage} />}
+            </div>
 
-            <AssetFormModal open={isAssetOpen} asset={editingAsset} onClose={() => setIsAssetOpen(false)} />
+            <AssetFormModal open={editing !== undefined} asset={editing} onClose={() => setEditing(undefined)} />
 
-            <AssetDrawer asset={previewAsset} onClose={() => setPreviewAsset(null)} onCopy={copyAssetText} onDownload={downloadAsset} />
+            <Drawer title={activeDetail?.title} open={Boolean(activeDetail)} onClose={() => setDetail(null)} size={490} destroyOnHidden>
+                {activeDetail && <>
+                    <AssetDetails key={activeDetail.id} asset={activeDetail} token={token} />
+                    <div className="mt-5 flex flex-wrap gap-2">
+                        <Button loading={busy} icon={<Download size={15} />} onClick={() => void download([activeDetail], false)}>下载原文件</Button>
+                        {activeDetail.kind === "text" && <Button onClick={() => {
+                            const content = activeDetail.data.content;
+                            void navigator.clipboard.writeText(content).then(() => message.success("已复制文案"), () => message.error("复制失败"));
+                        }}>复制文案</Button>}
+                        {activeDetail.deletedAt
+                            ? <Button icon={<RotateCcw size={15} />} onClick={() => changeTrash([activeDetail], false)}>恢复</Button>
+                            : <>
+                                <Button onClick={() => setEditing(activeDetail)}>编辑素材</Button>
+                                {token && assetNeedsOriginalDevice(activeDetail) && <Button loading={busy} onClick={() => void migrate([activeDetail])}>从此设备补传原文件</Button>}
+                                <Button danger icon={<Trash2 size={15} />} onClick={() => changeTrash([activeDetail], true)}>移入回收站</Button>
+                            </>}
+                    </div>
+                </>}
+            </Drawer>
 
-            <input ref={assetInputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importAssetZip(event.target.files?.[0])} />
-
-            <Modal title="删除素材" open={Boolean(deletingAsset)} onCancel={() => setDeletingAsset(null)} onOk={confirmDelete} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
-                确定删除「{deletingAsset?.title}」吗？删除后会从我的素材中移除。
+            <Modal title={`整理 ${chosen.length} 项资产`} open={batch !== null} onCancel={() => setBatch(null)} onOk={applyBatch} okText="保存" cancelText="取消" confirmLoading={savingBatch} destroyOnHidden>
+                {batch && <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">仅应用本次填写的字段。清空输入框会移除该字段。</p>
+                    <Input aria-label="批量款号" placeholder="完整款号" maxLength={100} value={batch.sku ?? ""} onChange={(event) => setBatch({ ...batch, sku: event.target.value })} />
+                    <Input aria-label="批量移动到文件夹" placeholder="移动到文件夹" maxLength={160} value={batch.folder ?? ""} onChange={(event) => setBatch({ ...batch, folder: event.target.value })} />
+                    <Select aria-label="批量用途" className="w-full" placeholder="用途" options={[...assetStages]} value={batch.stage} onChange={(value) => setBatch({ ...batch, stage: value })} />
+                    <Select aria-label="批量追加标签" mode="tags" className="w-full" placeholder="追加标签，回车确认" tokenSeparators={[",", "，"]} value={batch.tags || []} onChange={(value) => setBatch({ ...batch, tags: value })} />
+                </div>}
             </Modal>
+
+            <Modal title="批量上传" open={uploadOpen} onCancel={() => { if (!uploading) setUploadOpen(false); }} onOk={uploads.some((item) => !item.done) ? uploadQueued : () => setUploadOpen(false)}
+                okText={uploads.length && uploads.every((item) => item.done) ? "完成" : uploads.some((item) => item.error) ? "重试失败项" : "开始上传"} cancelText="关闭" confirmLoading={uploading}
+                okButtonProps={{ disabled: !uploads.length }} cancelButtonProps={{ disabled: uploading }} destroyOnHidden>
+                <div className="space-y-3">
+                    <div className="rounded-lg border border-dashed border-border p-5 text-center" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); queueFiles(event.dataTransfer.files); }}>
+                        <Button icon={<Upload size={15} />} disabled={uploading} onClick={() => filesRef.current?.click()}>选择文件</Button>
+                        <p className="mt-2 text-xs text-muted-foreground">可拖入多张图片、多个视频或音频。单个文件最多 256 MB。</p>
+                        <input ref={filesRef} type="file" accept="image/*,video/*,audio/*" multiple hidden onChange={(event) => { queueFiles(event.target.files); event.target.value = ""; }} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <Input aria-label="上传款号" placeholder="完整款号" maxLength={100} disabled={uploading} value={uploadFields.sku} onChange={(event) => setUploadFields({ ...uploadFields, sku: event.target.value })} />
+                        <Input aria-label="上传文件夹" placeholder="文件夹" maxLength={160} disabled={uploading} value={uploadFields.folder} onChange={(event) => setUploadFields({ ...uploadFields, folder: event.target.value })} />
+                    </div>
+                    {folders.length > 0 && <Select aria-label="选择已有文件夹" placeholder="或选择已有文件夹" className="w-full" options={folders} disabled={uploading} onChange={(value) => setUploadFields({ ...uploadFields, folder: value })} />}
+                    <Select aria-label="上传标签" mode="tags" className="w-full" placeholder="标签，回车确认" tokenSeparators={[",", "，"]} disabled={uploading} value={uploadFields.tags} onChange={(value) => setUploadFields({ ...uploadFields, tags: value })} />
+                    <ul className="max-h-64 space-y-2 overflow-y-auto">
+                        {uploads.map((item) => <li key={item.id} className="rounded-md border border-border p-2">
+                            <div className="flex items-center justify-between gap-2"><span className="truncate text-sm">{item.file.name}</span>
+                                {!item.done && !uploading && <Button type="text" size="small" aria-label={`移除 ${item.file.name}`} onClick={() => setUploads((items) => items.filter(({ id }) => id !== item.id))}>移除</Button>}
+                            </div>
+                            <Progress percent={item.progress} size="small" status={item.error ? "exception" : undefined} />
+                            {item.error && <p role="alert" className="text-xs text-destructive">{item.error}</p>}
+                        </li>)}
+                    </ul>
+                </div>
+            </Modal>
+        </main>
+    );
+}
+
+function AssetCover({ asset }: { asset: Asset }) {
+    const [broken, setBroken] = useState(false);
+    const url = asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "");
+    useEffect(() => setBroken(false), [url]);
+    if (url && !broken) return <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" onError={() => setBroken(true)} />;
+    if (asset.kind === "video") return <Film size={26} />;
+    if (asset.kind === "audio") return <AudioLines size={26} />;
+    if (asset.kind === "text") return <span className="line-clamp-4 px-4 text-sm">{asset.data.content}</span>;
+    return <FileText size={26} />;
+}
+
+function AssetDetails({ asset, token }: { asset: Asset; token: string }) {
+    const [refs, setRefs] = useState<AssetReference[]>([]);
+    const [refError, setRefError] = useState(false);
+    const [checkingRefs, setCheckingRefs] = useState(Boolean(token));
+    const [mediaError, setMediaError] = useState(false);
+    const url = assetMediaUrl(asset);
+    useEffect(() => {
+        let active = true;
+        if (token) fetchAssetReferences(token, asset.id).then((items) => { if (active) setRefs(items); }).catch(() => { if (active) setRefError(true); }).finally(() => { if (active) setCheckingRefs(false); });
+        return () => { active = false; };
+    }, [asset.id, token]);
+    useEffect(() => setMediaError(false), [url]);
+    const data = asset.kind === "text" ? null : asset.data;
+    return (
+        <div className="space-y-4">
+            <div className="overflow-hidden rounded-lg border border-border bg-muted p-2">
+                {asset.kind === "text" && <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-2 text-sm">{asset.data.content}</pre>}
+                {asset.kind === "image" && url && <img alt={asset.title} className="mx-auto max-h-72 object-contain" src={url} onError={() => setMediaError(true)} />}
+                {asset.kind === "video" && url && <video aria-label={asset.title} className="w-full" src={url} controls preload="metadata" onError={() => setMediaError(true)} />}
+                {asset.kind === "audio" && url && <audio aria-label={asset.title} className="w-full" src={url} controls preload="metadata" onError={() => setMediaError(true)} />}
+                {(mediaError || (data && !url)) && <p className="p-2 text-sm text-destructive">原文件暂不可读。旧本地素材可在原设备补传。</p>}
+            </div>
+            <dl className="grid grid-cols-[6rem_1fr] gap-y-2 text-sm">
+                {[
+                    ["类型", kindText(asset)], ["款号", asset.sku], ["文件夹", folderOf(asset)], ["用途", stageText(asset)],
+                    ["来源", asset.source], ["标签", asset.tags?.join("、")], ["入库时间", dateText(asset.createdAt)],
+                    ["文件大小", data?.bytes ? formatBytes(data.bytes) : ""],
+                    ["尺寸", data && "width" in data && data.width ? `${data.width} × ${data.height}` : ""],
+                    ["时长", data && "durationMs" in data && data.durationMs ? `${(data.durationMs / 1000).toFixed(1)} 秒` : ""],
+                    ["参考素材", Array.isArray(asset.metadata?.references) ? asset.metadata.references.filter((value) => typeof value === "string").join("、") : ""],
+                    ["模型", typeof asset.metadata?.model === "string" ? asset.metadata.model : ""],
+                    ["提示词或文案", typeof asset.metadata?.prompt === "string" ? asset.metadata.prompt : ""],
+                ].filter(([, value]) => value).map(([label, value]) => <div className="contents" key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-words">{value}</dd></div>)}
+            </dl>
+            {token && <section className="border-t border-border pt-3">
+                <h2 className="mb-2 font-medium">关联画布</h2>
+                {refs.length ? <ul>{refs.map((ref) => <li key={ref.id}><Link className="text-primary underline" href={`/canvas/${encodeURIComponent(ref.id)}`}>{ref.name || ref.id}</Link></li>)}</ul>
+                    : <p className="text-sm text-muted-foreground">{checkingRefs ? "正在检查画布引用…" : refError ? "未能读取画布引用" : "暂无画布引用"}</p>}
+            </section>}
         </div>
     );
-}
-
-function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
-    const cover = asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "");
-    const summary = assetSummary(asset);
-    return (
-        <Card
-            hoverable
-            className="overflow-hidden"
-            styles={{ body: { padding: 0 } }}
-            cover={
-                <button type="button" className="block w-full text-left" onClick={onOpen}>
-                    {cover ? (
-                        <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" />
-                    ) : asset.kind === "video" ? (
-                        <video src={asset.data.url + "#t=0.1"} muted playsInline preload="metadata" className="aspect-[4/3] w-full object-cover" />
-                    ) : (
-                        <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-5 text-center text-sm leading-6 text-stone-600 dark:bg-stone-900 dark:text-stone-300">{asset.kind === "text" ? asset.data.content : "暂无封面"}</div>
-                    )}
-                </button>
-            }
-        >
-            <button type="button" className="block w-full text-left" onClick={onOpen}>
-                <div className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                            <h2 className="line-clamp-1 text-sm font-semibold text-stone-950 dark:text-stone-100">{asset.title}</h2>
-                            <Typography.Text type="secondary" className="mt-1 block text-xs">
-                                {asset.source || "未标注来源"}
-                            </Typography.Text>
-                        </div>
-                        <Tag className="m-0 shrink-0 text-[11px]">{assetKindLabel(asset.kind)}</Tag>
-                    </div>
-                    <Typography.Paragraph type="secondary" ellipsis={{ rows: 3 }} className="!mb-0 !mt-2 !text-xs !leading-5">
-                        {summary}
-                    </Typography.Paragraph>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                        {(asset.tags || []).slice(0, 3).map((tag) => (
-                            <Tag key={tag} className="m-0 text-[11px]">
-                                {tag}
-                            </Tag>
-                        ))}
-                        {!asset.tags?.length ? <Tag className="m-0 text-[11px]">无标签</Tag> : null}
-                    </div>
-                </div>
-            </button>
-            <div className="flex items-center gap-2 px-4 pb-4">
-                <Button size="small" onClick={onOpen}>
-                    查看
-                </Button>
-                <Button size="small" icon={<PencilLine className="size-3.5" />} onClick={onEdit}>
-                    编辑
-                </Button>
-                {asset.kind === "text" ? (
-                    <Button size="small" icon={<Copy className="size-3.5" />} onClick={() => void onCopy(asset)}>
-                        复制
-                    </Button>
-                ) : null}
-                {asset.kind === "image" || asset.kind === "video" || asset.kind === "audio" ? (
-                    <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(asset)}>
-                        下载
-                    </Button>
-                ) : null}
-                <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
-                    删除
-                </Button>
-            </div>
-        </Card>
-    );
-}
-
-function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | null; onClose: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void }) {
-    const cover = asset ? asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "") : "";
-    return (
-        <Drawer title="素材详情" open={Boolean(asset)} size="large" onClose={onClose}>
-            {asset ? (
-                <div className="space-y-5">
-                    {cover ? (
-                        <Image src={cover} alt={asset.title} className="rounded-lg" />
-                    ) : (
-                        <div className="rounded-lg border border-stone-200 bg-stone-50 p-5 text-sm leading-6 text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300">{asset.kind === "text" ? asset.data.content : "暂无封面"}</div>
-                    )}
-                    <div>
-                        <Typography.Title level={4} className="!mb-2">
-                            {asset.title}
-                        </Typography.Title>
-                        <Space size={[4, 4]} wrap>
-                            <Tag>{assetKindLabel(asset.kind)}</Tag>
-                            {(asset.tags || []).map((tag) => (
-                                <Tag key={tag}>{tag}</Tag>
-                            ))}
-                        </Space>
-                    </div>
-                    <div className="rounded-lg border border-stone-200 p-4 dark:border-stone-800">
-                        <Typography.Text type="secondary" className="block text-xs">
-                            内容
-                        </Typography.Text>
-                        {asset.kind === "text" ? (
-                            <Typography.Paragraph className="mt-2 whitespace-pre-wrap">{asset.data.content}</Typography.Paragraph>
-                        ) : asset.kind === "video" ? (
-                            <video src={asset.data.url} controls className="mt-2 aspect-video w-full rounded-lg bg-black" />
-                        ) : asset.kind === "audio" ? (
-                            <audio src={asset.data.url} controls className="mt-2 w-full" />
-                        ) : (
-                            <Typography.Text className="mt-2 block">
-                                {asset.data.width}x{asset.data.height} · {formatBytes(asset.data.bytes)} · {asset.data.mimeType}
-                            </Typography.Text>
-                        )}
-                    </div>
-                    {asset.category ? (
-                        <div>
-                            <Typography.Text type="secondary">分类</Typography.Text>
-                            <Typography.Paragraph className="mt-1">{asset.category}</Typography.Paragraph>
-                        </div>
-                    ) : null}
-                    <Space>
-                        {asset.kind === "text" ? (
-                            <Button type="primary" icon={<Copy className="size-4" />} onClick={() => onCopy(asset)}>
-                                复制文本
-                            </Button>
-                        ) : null}
-                        {asset.kind === "image" || asset.kind === "video" || asset.kind === "audio" ? (
-                            <Button type="primary" icon={<Download className="size-4" />} onClick={() => onDownload(asset)}>
-                                {asset.kind === "video" ? "下载视频" : asset.kind === "audio" ? "下载音频" : "下载图片"}
-                            </Button>
-                        ) : null}
-                    </Space>
-                </div>
-            ) : null}
-        </Drawer>
-    );
-}
-
-function assetSummary(asset: Asset) {
-    if (asset.kind === "text") return asset.data.content;
-    if (asset.kind === "audio") return `${formatBytes(asset.data.bytes || 0)} · ${asset.data.mimeType}`;
-    return `${asset.data.width}x${asset.data.height} · ${formatBytes(asset.data.bytes)} · ${asset.data.mimeType}`;
-}
-
-function assetSearchText(asset: Asset) {
-    return [asset.title, asset.source || "", asset.category || "", (asset.tags || []).join(" "), asset.kind === "text" ? asset.data.content : asset.data.mimeType].join(" ").toLowerCase();
-}
-
-function assetKindLabel(kind: AssetKind) {
-    if (kind === "image") return "图片";
-    if (kind === "video") return "视频";
-    if (kind === "audio") return "音频";
-    return "文本";
 }

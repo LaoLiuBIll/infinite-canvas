@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 
 import { AppTopNav } from "@/components/layout/app-top-nav";
 import { fetchUserConfig } from "@/services/api/user-config";
+import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 
 const protectedPrefixes = ["/asset-library"];
@@ -21,6 +22,10 @@ export default function UserLayout({ children }: { children: ReactNode }) {
         if (!isReady || !isProtectedPage || user) return;
         router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
     }, [isProtectedPage, isReady, pathname, router, user]);
+
+    useEffect(() => {
+        if (isReady) void useAssetStore.getState().load();
+    }, [isReady, user]);
 
     useEffect(() => {
         if (!isReady) return;
@@ -44,8 +49,6 @@ export default function UserLayout({ children }: { children: ReactNode }) {
             ) {
                 void canvasStore.syncWithRemote(token, true);
             }
-            const { useAssetStore } = await import("@/stores/use-asset-store");
-            void useAssetStore.getState().hydrateAccountAssets(token, syncEnabled);
         }).catch(() => { });
     }, [isReady, user]);
 

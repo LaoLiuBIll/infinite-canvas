@@ -207,7 +207,7 @@ async function deleteServerMedia(storageKey: string) {
 export async function deleteStoredMedia(keys: Iterable<string>) {
     const { useAssetStore } = await import("@/stores/use-asset-store");
     const assetKeys = new Set(
-        useAssetStore.getState().assets
+        [...useAssetStore.getState().allAssets(), ...useAssetStore.getState().guestAssets]
             .map((a) => (a.kind === "video" || a.kind === "audio" ? a.data.storageKey : null))
             .filter((k): k is string => Boolean(k))
     );

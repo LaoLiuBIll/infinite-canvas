@@ -119,6 +119,11 @@ func New() *gin.Engine {
 	v1.DELETE("/generation-logs/images/:id", func(c *gin.Context) {
 		handler.DeleteUserImageGenerationLog(c.Writer, c.Request, c.Param("id"))
 	})
+	v1.GET("/personal-assets", gin.WrapF(handler.PersonalAssets))
+	v1.POST("/personal-assets", gin.WrapF(handler.CreatePersonalAsset))
+	v1.POST("/personal-assets/edit", gin.WrapF(handler.EditPersonalAssets))
+	v1.GET("/personal-assets/references", gin.WrapF(handler.PersonalAssetReferences))
+	v1.POST("/personal-assets/files", gin.WrapF(handler.UploadPersonalAssetFile))
 	v1.GET("/user-data/assets", gin.WrapF(handler.UserAssetData))
 	v1.POST("/user-data/assets", gin.WrapF(handler.SaveUserAssetData))
 	api.GET("/proxy-image", gin.WrapF(handler.ProxyImage))

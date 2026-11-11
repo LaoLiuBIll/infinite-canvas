@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Input } from "antd";
-import { Download, Mic } from "lucide-react";
+import { Download, FolderPlus, Mic } from "lucide-react";
 
 import { AudioSettingsPanel, type AudioSettingKey } from "@/components/audio-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
+import { useSaveGeneratedAsset } from "@/hooks/use-save-generated-asset";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isWorkflowProtocol } from "@/lib/model-channel";
 import { requestAudioGeneration } from "@/services/api/audio";
@@ -14,6 +15,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 
 export default function VoiceWorkbench() {
+    const saveGeneratedAsset = useSaveGeneratedAsset();
     const storedConfig = useConfigStore((state) => state.config);
     const modelSettings = useConfigStore((state) => state.publicSettings?.modelChannel);
     const settingsLoading = useConfigStore((state) => state.isPublicSettingsLoading);
@@ -26,7 +28,7 @@ export default function VoiceWorkbench() {
     const [audioSettings, setAudioSettings] = useState<Partial<Pick<AiConfig, AudioSettingKey>>>({});
     const [running, setRunning] = useState(false);
     const [error, setError] = useState("");
-    const [result, setResult] = useState<{ url: string; filename: string; userId: string }>();
+    const [result, setResult] = useState<{ url: string; filename: string; userId: string; blob: Blob; prompt: string; model: string }>();
     const activeRequest = useRef<AbortController | null>(null);
 
     const audioChannels = useMemo(() => (modelSettings?.channels || [])
@@ -70,7 +72,7 @@ export default function VoiceWorkbench() {
             if (!audio.size) throw new Error("渠道未返回音频");
             const subtype = /^audio\/(?:x-)?([a-z0-9]+)/.exec(audio.type)?.[1];
             const extension = subtype === "mpeg" ? "mp3" : subtype === "mp4" ? "m4a" : subtype || "audio";
-            setResult({ url: URL.createObjectURL(audio), filename: `配音.${extension}`, userId: user.id });
+            setResult({ url: URL.createObjectURL(audio), filename: `配音.${extension}`, userId: user.id, blob: audio, prompt: script, model });
         } catch (cause) {
             if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "配音生成失败，请重试");
         } finally {
@@ -110,7 +112,14 @@ export default function VoiceWorkbench() {
                             {currentResult ? (
                                 <>
                                     <audio aria-label="生成的配音" className="w-full" src={currentResult.url} controls preload="metadata" />
-                                    <Button href={currentResult.url} download={currentResult.filename} icon={<Download size={16} />}>下载音频</Button>
+                                    <div className="flex flex-wrap gap-2">
+                                        <Button href={currentResult.url} download={currentResult.filename} icon={<Download size={16} />}>下载音频</Button>
+                                        <Button icon={<FolderPlus size={16} />} onClick={() => saveGeneratedAsset({
+                                            kind: "audio", title: currentResult.filename, coverUrl: "", tags: [], source: "配音工作台",
+                                            data: { url: currentResult.url, mimeType: currentResult.blob.type, bytes: currentResult.blob.size },
+                                            metadata: { source: "voice-workbench", prompt: currentResult.prompt, model: currentResult.model },
+                                        })}>保存到资产中心</Button>
+                                    </div>
                                 </>
                             ) : <p className="text-sm text-muted-foreground">生成完成后，音频会显示在这里。</p>}
                         </section>

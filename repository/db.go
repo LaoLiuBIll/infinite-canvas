@@ -83,6 +83,7 @@ func DB() (*gorm.DB, error) {
 			&model.AgentSkill{},
 			&model.AgentSkillFile{},
 			&model.Asset{},
+			&model.PersonalAsset{},
 			&model.Setting{},
 			&model.CreativeWorkflow{},
 			&model.UserConfig{},

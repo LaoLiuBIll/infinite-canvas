@@ -588,7 +588,7 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
 export async function deleteStoredImages(keys: Iterable<string>, ownerToken?: string) {
     const { useAssetStore } = await import("@/stores/use-asset-store");
     const assetKeys = new Set(
-        useAssetStore.getState().assets
+        [...useAssetStore.getState().allAssets(), ...useAssetStore.getState().guestAssets]
             .map((a) => (a.kind !== "text" ? a.data.storageKey : null))
             .filter((k): k is string => Boolean(k))
     );

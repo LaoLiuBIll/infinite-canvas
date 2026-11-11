@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { fetchAssetLibrary, type AssetLibraryItem } from "@/services/api/assets";
 import { fetchPrompts, type Prompt } from "@/services/api/prompts";
 import { getImagePreviewRevision, previewUrlFor, subscribeImagePreviews } from "@/services/image-storage";
+import { assetSearchText } from "@/services/personal-asset-media";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
@@ -312,20 +313,22 @@ function AssetSourceTab({ label, active, theme, onClick }: { label: string; acti
 function MyAssetsTab({ theme, onAdd, onAssetDragStart, onAssetDragEnd }: { theme: CanvasTheme; onAdd: () => void; onAssetDragStart: (payload: InsertAssetPayload) => void; onAssetDragEnd: () => void }) {
     const assets = useAssetStore((state) => state.assets);
     const [keyword, setKeyword] = useState("");
+    const [sku, setSKU] = useState("");
+    const skus = useMemo(() => [...new Set(assets.flatMap((asset) => asset.sku ? [asset.sku] : []))].sort(), [assets]);
     const [type, setType] = useState("");
     const [category, setCategory] = useState("");
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
     const [page, setPage] = useState(1);
-    const categories = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.category ? [asset.category] : []))), [assets]);
+    const categories = useMemo(() => Array.from(new Set(assets.flatMap((asset) => (asset.folder ?? asset.category) ? [asset.folder ?? asset.category!] : []))), [assets]);
     const tags = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.tags || []))), [assets]);
     const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
-        return assets.filter((asset) => (!type || asset.kind === type) && (!category || asset.category === category) && (!selectedTags.length || selectedTags.some((tag) => asset.tags.includes(tag))) && (!query || [asset.title, asset.category || "", ...(asset.tags || [])].join(" ").toLowerCase().includes(query)));
-    }, [assets, keyword, type, category, selectedTags]);
+        return assets.filter((asset) => (!type || asset.kind === type) && (!category || (asset.folder ?? asset.category) === category) && (!sku || asset.sku === sku) && (!selectedTags.length || selectedTags.some((tag) => asset.tags.includes(tag))) && (!query || assetSearchText(asset).includes(query)));
+    }, [assets, keyword, type, category, selectedTags, sku]);
     const items = filtered.slice((page - 1) * ASSET_PAGE_SIZE, page * ASSET_PAGE_SIZE);
 
     useEffect(() => setPage((value) => Math.min(value, Math.max(1, Math.ceil(filtered.length / ASSET_PAGE_SIZE)))), [filtered.length]);
-    useEffect(() => setPage(1), [keyword, type, category, selectedTags]);
+    useEffect(() => setPage(1), [keyword, type, category, selectedTags, sku]);
 
     return (
         <>
@@ -334,7 +337,7 @@ function MyAssetsTab({ theme, onAdd, onAssetDragStart, onAssetDragEnd }: { theme
             </div>
             <div className="grid grid-cols-2 gap-2 px-3 pb-2">
                 <div className="min-w-0">
-                    <div className="mb-1 text-xs opacity-50" style={{ color: theme.node.text }}>分类</div>
+                    <div className="mb-1 text-xs opacity-50" style={{ color: theme.node.text }}>文件夹</div>
                     <Select size="small" className="w-full" value={category} onChange={setCategory} options={[{ label: "全部", value: "" }, ...categories.map((item) => ({ label: item, value: item }))]} />
                 </div>
                 <div className="min-w-0">
@@ -342,8 +345,9 @@ function MyAssetsTab({ theme, onAdd, onAssetDragStart, onAssetDragEnd }: { theme
                     <Select mode="multiple" size="small" className="w-full" value={selectedTags} placeholder="全部" allowClear maxTagCount={1} onChange={(values) => setSelectedTags(values.includes("") ? [] : values)} options={[{ label: "全部", value: "" }, ...tags.map((tag) => ({ label: tag, value: tag }))]} />
                 </div>
             </div>
+            <div className="px-3 pb-2"><Select size="small" aria-label="素材完整款号" className="w-full" placeholder="完整款号" showSearch allowClear value={sku || undefined} options={skus.map((value) => ({ value }))} onChange={(value) => setSKU(value || "")} /></div>
             <div className="flex items-center gap-2 px-3 pb-2">
-                <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索素材" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
+                <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索名称、款号" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
                 <button type="button" onClick={onAdd} className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }}>
                     <Plus className="size-3.5" />
                     添加

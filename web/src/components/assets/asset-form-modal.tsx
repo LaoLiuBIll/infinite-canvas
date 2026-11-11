@@ -7,6 +7,7 @@ import { App, AutoComplete, Button, Form, Input, Modal, Select, Space, Tag, Typo
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { uploadAssetMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
+import { assetStages } from "@/services/personal-asset-media";
 import { useAssetStore, type Asset, type AssetKind, type AudioAsset, type ImageAsset, type VideoAsset } from "@/stores/use-asset-store";
 
 type AssetFormValues = {
@@ -15,6 +16,9 @@ type AssetFormValues = {
     coverUrl: string;
     tags: string[];
     category?: string;
+    sku?: string;
+    folder?: string;
+    stage?: Asset["stage"];
     source?: string;
     content?: string;
 };
@@ -37,6 +41,7 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const updateAsset = useAssetStore((state) => state.updateAsset);
+    const [saving, setSaving] = useState(false);
     const [formKind, setFormKind] = useState<AssetKind>("text");
     const [imageDraft, setImageDraft] = useState<ImageDraft>(null);
     const [mediaDraft, setMediaDraft] = useState<MediaDraft>(null);
@@ -50,12 +55,16 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
         setFormKind(asset?.kind || "text");
         setImageDraft(asset?.kind === "image" ? asset.data : null);
         setMediaDraft(asset?.kind === "video" || asset?.kind === "audio" ? asset.data : null);
+        form.resetFields();
         form.setFieldsValue(asset ? {
             kind: asset.kind,
             title: asset.title,
             coverUrl: asset.coverUrl,
             tags: asset.tags || [],
             category: asset.category,
+            sku: asset.sku,
+            folder: asset.folder ?? asset.category,
+            stage: asset.stage,
             source: asset.source,
             content: asset.kind === "text" ? asset.data.content : asset.kind === "image" ? asset.data.dataUrl : asset.data.url,
         } : { kind: "text", title: "", coverUrl: "", tags: [], category: "", source: "手动添加", content: "" });
@@ -68,13 +77,16 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
             coverUrl: values.coverUrl?.trim() || (values.kind === "image" && imageDraft ? imageDraft.dataUrl : ""),
             tags: values.tags || [],
             category: values.category?.trim(),
+            sku: values.sku?.trim() || "",
+            folder: values.folder?.trim() || "",
+            stage: values.stage || undefined,
             source: values.source?.trim(),
             metadata: asset?.metadata || { source: "manual" },
         };
 
         if (values.kind === "text") {
             const nextAsset = { ...base, kind: "text" as const, data: { content: (values.content || "").trim() } };
-            asset ? updateAsset(asset.id, nextAsset) : addAsset(nextAsset);
+            await (asset ? updateAsset(asset.id, nextAsset) : addAsset(nextAsset));
         } else if (values.kind === "image") {
             const url = (values.content || "").trim();
             if (!imageDraft && !url) {
@@ -91,7 +103,7 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
                 } catch {}
             }
             const nextAsset = { ...base, coverUrl: base.coverUrl || data.dataUrl, kind: "image" as const, data };
-            asset ? updateAsset(asset.id, nextAsset) : addAsset(nextAsset);
+            await (asset ? updateAsset(asset.id, nextAsset) : addAsset(nextAsset));
         } else if (values.kind === "video") {
             const url = (values.content || "").trim();
             if (!mediaDraft && !url) {
@@ -100,7 +112,7 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
             }
             const data = (mediaDraft as VideoAsset["data"] | null) || { url, width: 0, height: 0, bytes: 0, mimeType: "video/mp4" };
             const nextAsset = { ...base, kind: "video" as const, data };
-            asset ? updateAsset(asset.id, nextAsset) : addAsset(nextAsset);
+            await (asset ? updateAsset(asset.id, nextAsset) : addAsset(nextAsset));
         } else {
             const url = (values.content || "").trim();
             if (!mediaDraft && !url) {
@@ -109,11 +121,22 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
             }
             const data = (mediaDraft as AudioAsset["data"] | null) || { url, mimeType: "audio/mpeg" };
             const nextAsset = { ...base, kind: "audio" as const, data };
-            asset ? updateAsset(asset.id, nextAsset) : addAsset(nextAsset);
+            await (asset ? updateAsset(asset.id, nextAsset) : addAsset(nextAsset));
         }
 
         message.success(asset ? "素材已更新" : "素材已保存");
         onClose();
+    };
+
+    const submit = async () => {
+        setSaving(true);
+        try {
+            await saveAsset();
+        } catch (error) {
+            if (error instanceof Error) message.error(error.message);
+        } finally {
+            setSaving(false);
+        }
     };
 
     const readCoverFile = async (file?: File) => {
@@ -144,7 +167,7 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
     };
 
     return (
-            <Modal title={asset ? "编辑素材" : "新增素材"} open={open} width={980} onCancel={onClose} onOk={() => void saveAsset()} okText="保存" cancelText="取消" destroyOnHidden>
+            <Modal title={asset ? "编辑素材" : "新增素材"} open={open} width={980} onCancel={() => { if (!saving) onClose(); }} onOk={submit} confirmLoading={saving} okText="保存" cancelText="取消" destroyOnHidden>
                 <div className="grid gap-6 pt-1 lg:grid-cols-[minmax(0,1fr)_320px]">
                     <Form form={form} layout="vertical" requiredMark={false} initialValues={{ kind: "text", tags: [] }}>
                         <Form.Item name="kind" label="类型">
@@ -174,6 +197,11 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
                                 </Button>
                             </Space.Compact>
                         </Form.Item>
+                        <div className="grid gap-x-3 sm:grid-cols-3">
+                            <Form.Item name="sku" label="完整款号"><Input maxLength={100} /></Form.Item>
+                            <Form.Item name="folder" label="文件夹"><Input maxLength={160} /></Form.Item>
+                            <Form.Item name="stage" label="用途"><Select options={[...assetStages]} /></Form.Item>
+                        </div>
                         <Form.Item name="tags" label="标签">
                             <Select mode="tags" tokenSeparators={[",", "，"]} placeholder="输入标签后回车" />
                         </Form.Item>

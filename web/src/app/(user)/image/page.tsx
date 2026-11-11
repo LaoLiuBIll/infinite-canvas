@@ -53,7 +53,7 @@ import { comfyOutputStorageKey, getWorkflowTask, isRetryableWorkflowError, submi
 import { parseWorkflowRef, type WorkflowRef } from "@/lib/workflow-channel";
 import { deleteImageGenerationLogs, fetchImageGenerationLogs, saveImageGenerationLogs } from "@/services/api/generation-logs";
 import { deleteImagePreviews, deleteStoredImages, deleteUnusedImagePreviews, ensureImagePreview, getImagePreviewRevision, imageToDataUrl, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage, uploadRemoteImageToServer } from "@/services/image-storage";
-import { useAssetStore } from "@/stores/use-asset-store";
+import { useSaveGeneratedAsset } from "@/hooks/use-save-generated-asset";
 import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
 
@@ -145,7 +145,7 @@ export default function ImagePage() {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
-    const addAsset = useAssetStore((state) => state.addAsset);
+    const saveGeneratedAsset = useSaveGeneratedAsset();
     const token = useUserStore((state) => state.token);
     const userId = useUserStore((state) => state.user?.id || "");
     const isUserReady = useUserStore((state) => state.isReady);
@@ -659,27 +659,16 @@ export default function ImagePage() {
         }
     };
 
-    const saveResultToAssets = async (image: GeneratedImage, index: number) => {
-        const stored = image.storageKey
-            ? {
-                  url: await resolveImageUrl(image.storageKey, image.dataUrl),
-                  storageKey: image.storageKey,
-                  width: image.width,
-                  height: image.height,
-                  bytes: image.bytes,
-                  mimeType: image.mimeType || "image/png",
-              }
-            : await uploadImage(await imageToDataUrl(image));
-        addAsset({
+    const saveResultToAssets = (image: GeneratedImage, index: number, origin: Pick<GenerationLog, "prompt" | "model" | "references">) => {
+        saveGeneratedAsset({
             kind: "image",
-            title: `生成结果 ${index + 1}`,
-            coverUrl: stored.url,
+            title: `生成图片 ${index + 1}`,
+            coverUrl: image.dataUrl,
             tags: [],
             source: "生图工作台",
-            data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
-            metadata: { source: "image-page", prompt },
+            data: { dataUrl: image.dataUrl, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType || "image/png" },
+            metadata: { source: "image-page", prompt: origin.prompt, model: origin.model, references: origin.references.map((item) => item.name) },
         });
-        message.success("已加入我的素材");
     };
 
     const syncImage = async (image: GeneratedImage, index: number) => {
@@ -1775,7 +1764,7 @@ function ResultsPanel({
     onEdit: (image: GeneratedImage, index: number) => void;
     onMaskEdit: (log: GenerationLog, image: GeneratedImage) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
-    onSaveAsset: (image: GeneratedImage, index: number) => void;
+    onSaveAsset: (image: GeneratedImage, index: number, origin: Pick<GenerationLog, "prompt" | "model" | "references">) => void;
     syncingImageIds: string[];
     onSyncResult: (resultId: string, image: GeneratedImage, index: number) => void;
     onSyncLog: (log: GenerationLog, image: GeneratedImage, index: number) => void;
@@ -2036,7 +2025,7 @@ function ResultImageCard({
     onCopyPrompt: (text: string) => void | Promise<void>;
     onEdit: (image: GeneratedImage, index: number) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
-    onSaveAsset: (image: GeneratedImage, index: number) => void;
+    onSaveAsset: (image: GeneratedImage, index: number, origin: Pick<GenerationLog, "prompt" | "model" | "references">) => void;
     syncing: boolean;
     onSync: (image: GeneratedImage) => void;
 }) {
@@ -2061,7 +2050,7 @@ function ResultImageCard({
                 </div>
                 <div className="flex shrink-0 gap-1">
                     <Button size="small" title="同步到云端存储" icon={<CloudUpload className="size-3.5" />} loading={syncing} disabled={image.storageKey?.startsWith("server:")} onClick={() => onSync(image)} />
-                    <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(image, index)} />
+                    <Button size="small" aria-label="保存到资产中心" title="保存到资产中心" icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(image, index, result)} />
                     <Button size="small" icon={<PenLine className="size-3.5" />} onClick={() => void onEdit(image, index)} />
                     <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)} />
                 </div>
@@ -2193,7 +2182,7 @@ function HistoryLogCard({
     onEdit: (image: GeneratedImage, index: number) => void;
     onMaskEdit: (image: GeneratedImage) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
-    onSaveAsset: (image: GeneratedImage, index: number) => void;
+    onSaveAsset: (image: GeneratedImage, index: number, origin: Pick<GenerationLog, "prompt" | "model" | "references">) => void;
     syncing: boolean;
     onSync: (image: GeneratedImage) => void;
 }) {
@@ -2339,7 +2328,7 @@ function HistoryLogCard({
                 {firstImage ? (
                     <div className="flex shrink-0 gap-1">
                         <Button size="small" title="同步到云端存储" icon={<CloudUpload className="size-3.5" />} loading={syncing} disabled={firstImage.storageKey?.startsWith("server:")} onClick={() => closeThen(() => onSync(firstImage))} />
-                        <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => closeThen(() => void onSaveAsset(firstImage, index))} />
+                        <Button size="small" aria-label="保存到资产中心" title="保存到资产中心" icon={<FolderPlus className="size-3.5" />} onClick={() => closeThen(() => void onSaveAsset(firstImage, index, log))} />
                         <Button size="small" icon={<PenLine className="size-3.5" />} onClick={() => closeThen(() => void onEdit(firstImage, index))} />
                         <Button size="small" icon={<Download className="size-3.5" />} onClick={() => closeThen(() => onDownload(firstImage, index))} />
                     </div>

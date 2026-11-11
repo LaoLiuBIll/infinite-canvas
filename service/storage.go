@@ -340,6 +340,13 @@ func DeleteStorageObject(ctx context.Context, id string, providerInput *StorageO
 	if user, ok := UserFromContext(ctx); ok && object.CreatedBy != "" && object.CreatedBy != user.ID {
 		return errors.New("无权删除该对象")
 	}
+	if object.ProviderID == personalAssetFileProvider {
+		return nil
+	}
+	referenced, err := repository.IsPersonalAssetFile(id)
+	if err != nil || referenced {
+		return err
+	}
 	settings, err := repository.GetSettings()
 	if err != nil {
 		return err
@@ -376,6 +383,10 @@ func DeleteDirectStorageObjectRecord(ctx context.Context, id string) error {
 	user, ok := UserFromContext(ctx)
 	if !ok || user.ID == "" || object.CreatedBy != user.ID || !object.Direct {
 		return errors.New("无权删除该对象记录")
+	}
+	referenced, err := repository.IsPersonalAssetFile(id)
+	if err != nil || referenced {
+		return err
 	}
 	return repository.DeleteStorageObjectRecord(id)
 }

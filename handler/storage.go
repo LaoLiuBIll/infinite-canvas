@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tigerowo/infinite-canvas/model"
 	"github.com/tigerowo/infinite-canvas/service"
@@ -140,6 +141,20 @@ func DeleteDirectFileRecord(w http.ResponseWriter, r *http.Request, id string) {
 
 // FileContent 获取文件内容。
 func FileContent(w http.ResponseWriter, r *http.Request, id string) {
+	file, mime, err := service.OpenPersonalAssetFile(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if file != nil {
+		defer file.Close()
+		w.Header().Set("Content-Type", mime)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+		http.ServeContent(w, r, id, time.Time{}, file)
+		return
+	}
 	download, err := service.DownloadStorageObject(id, r.Header.Get("Range"))
 	if err != nil {
 		FailError(w, err)

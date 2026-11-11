@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { App, Button, Empty, Input, Modal, Pagination, Spin, Tabs, Tag } from "antd";
+import { Select, App, Button, Empty, Input, Modal, Pagination, Spin, Tabs, Tag } from "antd";
 import { ImagePlus, Plus, Search, Upload } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { assetSearchText } from "@/services/personal-asset-media";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { fetchAssetLibrary, type AssetLibraryItem } from "@/services/api/assets";
 import { uploadAnonymousTemporaryFile } from "@/services/anonymous-storage";
@@ -225,6 +226,8 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const [keyword, setKeyword] = useState("");
+    const [sku, setSKU] = useState("");
+    const skus = useMemo(() => [...new Set(assets.flatMap((asset) => asset.sku ? [asset.sku] : []))].sort(), [assets]);
     const [kindFilter, setKindFilter] = useState("all");
     const [category, setCategory] = useState("");
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -239,7 +242,7 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
     const anonymousInputRef = useRef<HTMLInputElement>(null);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-    const categories = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.category ? [asset.category] : []))), [assets]);
+    const categories = useMemo(() => Array.from(new Set(assets.flatMap((asset) => (asset.folder ?? asset.category) ? [asset.folder ?? asset.category!] : []))), [assets]);
     const tags = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.tags || []))), [assets]);
 
     const filtered = useMemo(() => {
@@ -247,10 +250,11 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
         return assets
             .filter((a) => a.kind === "text" || a.kind === "image" || a.kind === "video" || a.kind === "audio")
             .filter((a) => kindFilter === "all" || a.kind === kindFilter)
-            .filter((a) => !category || a.category === category)
+            .filter((a) => !category || (a.folder ?? a.category) === category)
             .filter((a) => !selectedTags.length || selectedTags.some((tag) => (a.tags || []).includes(tag)))
-            .filter((a) => !query || [a.title, ...(a.tags || [])].join(" ").toLowerCase().includes(query));
-    }, [assets, keyword, kindFilter, category, selectedTags]);
+            .filter((a) => !sku || a.sku === sku)
+            .filter((a) => !query || assetSearchText(a).includes(query));
+    }, [assets, keyword, kindFilter, category, selectedTags, sku]);
 
     const visible = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
 
@@ -295,14 +299,14 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
                     message.error("请输入文本内容");
                     return;
                 }
-                addAsset({ kind: "text", title, coverUrl: "", tags: [], source: "素材选择器", data: { content } });
+                await addAsset({ kind: "text", title, coverUrl: "", tags: [], source: "素材选择器", data: { content } });
             } else if (createKind === "image") {
                 if (!selectedFile && !createUrl.trim()) {
                     message.error("请选择图片或填写图片 URL");
                     return;
                 }
                 const stored = selectedFile ? await uploadImage(selectedFile) : null;
-                addAsset({
+                await addAsset({
                     kind: "image",
                     title,
                     coverUrl: stored?.url || createUrl.trim(),
@@ -316,7 +320,7 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
                     return;
                 }
                 const stored = selectedFile ? await uploadAssetMediaFile(selectedFile, "asset-video") : null;
-                addAsset({
+                await addAsset({
                     kind: "video",
                     title,
                     coverUrl: "",
@@ -332,7 +336,7 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
                     return;
                 }
                 const stored = selectedFile ? await uploadAssetMediaFile(selectedFile, "asset-audio") : null;
-                addAsset({
+                await addAsset({
                     kind: "audio",
                     title,
                     coverUrl: "",
@@ -358,7 +362,7 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
                     className="w-56"
                     size="small"
                     prefix={<Search className="size-3.5 text-stone-400" />}
-                    placeholder="搜索素材"
+                    placeholder="搜索名称、款号、文案"
                     value={keyword}
                     allowClear
                     onChange={(e) => {
@@ -366,6 +370,7 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
                         setKeyword(e.target.value);
                     }}
                 />
+                <Select size="small" aria-label="素材完整款号" className="min-w-32" placeholder="完整款号" showSearch allowClear value={sku || undefined} options={skus.map((value) => ({ value }))} onChange={(value) => { setPage(1); setSKU(value || ""); }} />
                 <div className="flex gap-1.5">
                     {kindOptions.map((opt) => (
                         <Tag.CheckableTag

@@ -26,7 +26,7 @@ import { deleteVideoGenerationLogs, fetchVideoGenerationLogs, saveVideoGeneratio
 import { createVideoGenerationTask, deleteVideoGenerationTask, listVideoGenerationTasks, pollVideoGenerationTaskStatus, VIDEO_POLL_INTERVAL_MS, VideoRequestError, type VideoResponse } from "@/services/api/video";
 import { stopCanvasTask } from "@/services/api/canvas-tasks";
 import { comfyOutputStorageKey, getWorkflowTask, isRetryableWorkflowError, submitWorkflowTask, workflowMediaSource } from "@/services/api/workflow-generation";
-import { useAssetStore } from "@/stores/use-asset-store";
+import { useSaveGeneratedAsset } from "@/hooks/use-save-generated-asset";
 import { channelProtocolForConfig, normalizeLocalChannels, useConfigStore, useEffectiveConfig, type AiConfig, type VideoElementItem, type VideoElementReference } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -128,7 +128,7 @@ export default function VideoPage() {
     }, [updateConfig]);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
-    const addAsset = useAssetStore((state) => state.addAsset);
+    const saveGeneratedAsset = useSaveGeneratedAsset();
     const token = useUserStore((state) => state.token);
     const userId = useUserStore((state) => state.user?.id || "");
     const isUserReady = useUserStore((state) => state.isReady);
@@ -914,17 +914,16 @@ export default function VideoPage() {
         if (previewLog?.id === log.id) setPreviewLog(nextLog);
     };
 
-    const saveResultToAssets = (video: GeneratedVideo) => {
-        addAsset({
+    const saveResultToAssets = (video: GeneratedVideo, origin: Pick<GenerationLog, "prompt" | "model" | "references">) => {
+        saveGeneratedAsset({
             kind: "video",
             title: "生成视频",
             coverUrl: "",
             tags: [],
             source: "视频创作台",
             data: { url: video.url, storageKey: video.storageKey, width: video.width, height: video.height, bytes: video.bytes, mimeType: video.mimeType },
-            metadata: { source: "video-page", prompt },
+            metadata: { source: "video-page", prompt: origin.prompt, model: origin.model, references: origin.references.map((item) => item.name) },
         });
-        message.success("已加入我的素材");
     };
 
     const insertPickedAsset = async (payload: InsertAssetPayload) => {
@@ -1995,7 +1994,7 @@ function ResultsPanel({
     onDownload: (video: GeneratedVideo) => void;
     onSyncResult: (resultId: string, video: GeneratedVideo, index: number) => void;
     onSyncLog: (log: GenerationLog, video: GeneratedVideo, index: number) => void;
-    onSaveAsset: (video: GeneratedVideo) => void;
+    onSaveAsset: (video: GeneratedVideo, origin: Pick<GenerationLog, "prompt" | "model" | "references">) => void;
     syncingVideoIds: string[];
 }) {
     const visibleResults = results.filter((result) => result.status !== "failed" || pendingCount > 0);
@@ -2044,7 +2043,7 @@ function HistoryIcon() {
     return <History className="size-4 shrink-0 text-stone-400" />;
 }
 
-function ResultVideoCard({ result, video, index, syncing, onCopyPrompt, onDownload, onSync, onSaveAsset }: { result: GenerationResult; video: GeneratedVideo; index: number; syncing: boolean; onCopyPrompt: (text: string) => void | Promise<void>; onDownload: (video: GeneratedVideo) => void; onSync: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void }) {
+function ResultVideoCard({ result, video, index, syncing, onCopyPrompt, onDownload, onSync, onSaveAsset }: { result: GenerationResult; video: GeneratedVideo; index: number; syncing: boolean; onCopyPrompt: (text: string) => void | Promise<void>; onDownload: (video: GeneratedVideo) => void; onSync: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo, origin: Pick<GenerationLog, "prompt" | "model" | "references">) => void }) {
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
             <div className="relative aspect-video bg-black">
@@ -2056,7 +2055,7 @@ function ResultVideoCard({ result, video, index, syncing, onCopyPrompt, onDownlo
                 <video src={video.url} controls className="size-full object-contain" />
             </div>
             <TaskInfo item={result} onCopyPrompt={onCopyPrompt} />
-            <VideoMetaBar video={video} index={index} syncing={syncing} onDownload={onDownload} onSync={onSync} onSaveAsset={onSaveAsset} />
+            <VideoMetaBar video={video} index={index} syncing={syncing} onDownload={onDownload} onSync={onSync} onSaveAsset={(value) => onSaveAsset(value, result)} />
         </div>
     );
 }
@@ -2125,7 +2124,7 @@ function FailedVideoCard({ result, error, onCopyPrompt, onPreview, onRetry }: { 
     );
 }
 
-function HistoryLogCard({ log, index, selected, active, syncing, onSelectedChange, onDelete, onPreview, onRetry, onCopyPrompt, onDownload, onSync, onSaveAsset }: { log: GenerationLog; index: number; selected: boolean; active: boolean; syncing: boolean; onSelectedChange: (checked: boolean) => void; onDelete: () => void; onPreview: () => void; onRetry: () => void; onCopyPrompt: (text: string) => void | Promise<void>; onDownload: (video: GeneratedVideo) => void; onSync: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void }) {
+function HistoryLogCard({ log, index, selected, active, syncing, onSelectedChange, onDelete, onPreview, onRetry, onCopyPrompt, onDownload, onSync, onSaveAsset }: { log: GenerationLog; index: number; selected: boolean; active: boolean; syncing: boolean; onSelectedChange: (checked: boolean) => void; onDelete: () => void; onPreview: () => void; onRetry: () => void; onCopyPrompt: (text: string) => void | Promise<void>; onDownload: (video: GeneratedVideo) => void; onSync: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo, origin: Pick<GenerationLog, "prompt" | "model" | "references">) => void }) {
     const [expanded, setExpanded] = useState(false);
     const [detailOpen, setDetailOpen] = useState(false);
     return (
@@ -2164,7 +2163,7 @@ function HistoryLogCard({ log, index, selected, active, syncing, onSelectedChang
                     <Button size="small" onClick={onPreview}>载入</Button>
                     <Button size="small" icon={<RotateCcw className="size-3.5" />} onClick={onRetry}>重试</Button>
                 </div>
-                {log.video ? <div className="flex shrink-0 gap-1"><Button size="small" title="同步到云端存储" icon={<CloudUpload className="size-3.5" />} loading={syncing} disabled={isCloudVideo(log.video)} onClick={() => onSync(log.video!)} /><Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => onSaveAsset(log.video!)} /><Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(log.video!)} /></div> : null}
+                {log.video ? <div className="flex shrink-0 gap-1"><Button size="small" title="同步到云端存储" icon={<CloudUpload className="size-3.5" />} loading={syncing} disabled={isCloudVideo(log.video)} onClick={() => onSync(log.video!)} /><Button size="small" aria-label="保存到资产中心" title="保存到资产中心" icon={<FolderPlus className="size-3.5" />} onClick={() => onSaveAsset(log.video!, log)} /><Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(log.video!)} /></div> : null}
             </div>
             <Modal title="失败详情" open={detailOpen} width={760} onCancel={() => setDetailOpen(false)} footer={null}>
                 <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-stone-950 p-3 text-xs text-stone-100">{log.errorDetail || log.error || "没有详情"}</pre>
@@ -2183,7 +2182,7 @@ function VideoMetaBar({ video, syncing, onDownload, onSync, onSaveAsset }: { vid
             </div>
             <div className="flex shrink-0 gap-1">
                 <Button size="small" title="同步到云端存储" icon={<CloudUpload className="size-3.5" />} loading={syncing} disabled={isCloudVideo(video)} onClick={() => onSync(video)} />
-                <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => onSaveAsset(video)} />
+                <Button size="small" aria-label="保存到资产中心" title="保存到资产中心" icon={<FolderPlus className="size-3.5" />} onClick={() => onSaveAsset(video)} />
                 <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(video)} />
             </div>
         </div>

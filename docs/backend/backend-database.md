@@ -82,9 +82,23 @@ description: 当前后端主要数据表与字段说明
 
 `storage_provider.s3` 保存 Endpoint、Region、Bucket、Access Key、Secret、公开域名和路径前缀；`storage_provider.webdav` 保存 WebDAV 地址、远程目录、用户名和密码/应用密码。自动同步开关不重复写入 Provider；后端下载和删除旧媒体时仍会读取已保存但已停用的 Provider。
 
+### personal_assets
+
+登录用户的个人资产目录，使用 `user_id` 和 `id` 作为联合主键。每条记录独立更新。旧 `user_configs.asset_data` 在第一次读取时按原资产 ID 补录，已迁移的记录保留现有值。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `user_id` | string | 资产归属账号 |
+| `id` | string | 原有或新建资产 ID |
+| `data` | 大文本 | 名称、类型、完整款号、文件夹、标签、用途、来源、文件引用和回收站时间 |
+| `storage_key` | string | 可选文件引用，供现有存储清理检查 |
+| `updated_at` | string | 更新时间 |
+
+资产回收站提供 30 天恢复窗口。已引用的文件保持可读，资产操作不触发原文件清理。服务端保存的媒体写入 `ASSET_FILE_DIR`，默认为 `data/personal-assets`，部署时需将此目录纳入文件备份。
+
 ### storage_objects
 
-S3/R2 与 WebDAV 共用的媒体文件索引表，不保存画布、素材列表或生成记录。
+S3/R2、WebDAV 和资产中心服务器文件共用的媒体文件索引表，不保存画布、素材列表或生成记录。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
