@@ -99,9 +99,12 @@ export default function AdminUsersPage() {
         {
             title: "操作",
             key: "actions",
-            width: 96,
+            width: 164,
             render: (_, item) => (
                 <Space size={4}>
+                    <Button type="link" size="small" href={`/admin/user-content?userId=${encodeURIComponent(item.id)}`} aria-label={`查看内容 ${item.username}`}>
+                        查看内容
+                    </Button>
                     <Tooltip title="编辑">
                         <Button type="text" size="small" icon={<EditOutlined />} onClick={() => setEditingUser(item)} />
                     </Tooltip>

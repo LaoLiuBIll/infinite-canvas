@@ -5,7 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Card, Descriptions, Drawer, Empty, Flex, Input, Select, Space, Spin, Table, Tabs, Tag, Typography } from "antd";
 import type { TableColumnsType } from "antd";
 import dayjs from "dayjs";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 
 import { formatBytes } from "@/lib/image-utils";
 import { fetchAdminContent, fetchAdminContentDetail, fetchAdminContentMedia, type AdminContentDetail, type AdminContentRecord, type ContentRole, type ContentSection } from "@/services/api/admin-user-content";
@@ -33,6 +34,17 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : "
 const ownerName = (row: AdminContentRecord) => row.displayName || row.username || row.userId;
 
 export default function AdminUserContentPage() {
+    return (
+        <Suspense fallback={null}>
+            <AdminUserContent />
+        </Suspense>
+    );
+}
+
+function AdminUserContent() {
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const userId = searchParams.get("userId")?.trim() || undefined;
     const token = useUserStore((state) => state.token);
     const user = useUserStore((state) => state.user);
     const [section, setSection] = useState<ContentSection>("files");
@@ -40,11 +52,10 @@ export default function AdminUserContentPage() {
     const [searchText, setSearchText] = useState("");
     const [role, setRole] = useState<ContentRole>();
     const [type, setType] = useState<string>();
-    const [owner, setOwner] = useState<{ id: string; name: string }>();
     const [page, setPage] = useState(1);
     const [selected, setSelected] = useState<AdminContentRecord>();
     const canRead = Boolean(token && user?.role === "admin");
-    const params = { section, keyword, role, type, userId: owner?.id, page, pageSize };
+    const params = { section, keyword, role, type, userId, page, pageSize };
 
     const list = useQuery({
         queryKey: ["admin-user-content", user?.id, params],
@@ -59,13 +70,29 @@ export default function AdminUserContentPage() {
         gcTime: 0,
         refetchOnWindowFocus: false,
     });
+    const owner = list.data?.items[0];
+
+    function filterByOwner(id?: string) {
+        const nextParams = new URLSearchParams(searchParams.toString());
+        if (id) {
+            nextParams.set("userId", id);
+            setRole(undefined);
+            setKeyword("");
+            setSearchText("");
+        } else {
+            nextParams.delete("userId");
+        }
+        setPage(1);
+        const query = nextParams.toString();
+        router.replace(query ? `/admin/user-content?${query}` : "/admin/user-content", { scroll: false });
+    }
 
     const columns: TableColumnsType<AdminContentRecord> = [
         { title: "内容", key: "title", ellipsis: true, render: (_, row) =>
             <Button type="link" className="max-w-full px-0" icon={<EyeOutlined />} aria-label={`查看 ${row.title}`} onClick={() => setSelected(row)}><span className="truncate">{row.title}</span></Button> },
         { title: "归属账号", key: "user", width: 210, render: (_, row) =>
             <Flex vertical align="start">
-                <Button type="link" className="max-w-full px-0" title={`只看 ${ownerName(row)}`} onClick={() => { setOwner({ id: row.userId, name: ownerName(row) }); setRole(undefined); setKeyword(""); setSearchText(""); setPage(1); }}>{ownerName(row)}</Button>
+                <Button type="link" className="max-w-full px-0" title={`只看 ${ownerName(row)}`} onClick={() => filterByOwner(row.userId)}>{ownerName(row)}</Button>
                 {row.displayName && row.username !== row.displayName && <Typography.Text type="secondary">{row.username}</Typography.Text>}
             </Flex> },
         { title: "角色", key: "role", width: 105, render: (_, row) => <Tag color={row.role === "admin" ? "gold" : "default"}>{displayRole(row.role)}</Tag> },
@@ -95,7 +122,7 @@ export default function AdminUserContentPage() {
                     <Select<string> aria-label="筛选内容类型" allowClear placeholder="全部类型" className="min-w-28"
                         value={type} options={kinds.filter((item) => section === "results" ? ["image", "video", "audio"].includes(item.value) : section === "files" ? item.value !== "text" : item.value !== "file")}
                         onChange={(value) => { setType(value); setPage(1); }} />
-                    {owner && <Tag closable onClose={() => { setOwner(undefined); setPage(1); }}>账号 {owner.name}</Tag>}
+                    {userId && <Tag key={userId} closable onClose={() => filterByOwner()}>账号 {owner ? ownerName(owner) : userId}</Tag>}
                     <Button icon={<ReloadOutlined />} onClick={() => void list.refetch()} aria-label="刷新用户内容" />
                 </Flex>
                 {list.error && <Alert showIcon type="error" title={errorText(list.error)} className="mb-3" />}
