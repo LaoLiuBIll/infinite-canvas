@@ -122,6 +122,11 @@ func New() *gin.Engine {
 	v1.GET("/personal-assets", gin.WrapF(handler.PersonalAssets))
 	v1.POST("/personal-assets", gin.WrapF(handler.CreatePersonalAsset))
 	v1.POST("/personal-assets/edit", gin.WrapF(handler.EditPersonalAssets))
+	v1.GET("/personal-assets/catalog", gin.WrapF(handler.PersonalAssetCatalog))
+	v1.POST("/personal-assets/categories", gin.WrapF(handler.SavePersonalAssetCategory))
+	v1.DELETE("/personal-assets/categories/:id", func(c *gin.Context) {
+		handler.DeletePersonalAssetCategory(c.Writer, c.Request, c.Param("id"))
+	})
 	v1.GET("/personal-assets/references", gin.WrapF(handler.PersonalAssetReferences))
 	v1.POST("/personal-assets/files", gin.WrapF(handler.UploadPersonalAssetFile))
 	v1.GET("/user-data/assets", gin.WrapF(handler.UserAssetData))
@@ -137,6 +142,9 @@ func New() *gin.Engine {
 
 	admin := api.Group("/admin", middleware.AdminAuth)
 	admin.GET("/users", gin.WrapF(handler.AdminUsers))
+	admin.GET("/user-content", gin.WrapF(handler.AdminUserContent))
+	admin.GET("/user-content/detail", gin.WrapF(handler.AdminUserContentDetail))
+	admin.GET("/user-content/media", gin.WrapF(handler.AdminUserContentMedia))
 	admin.POST("/users", gin.WrapF(handler.AdminSaveUser))
 	admin.POST("/users/:id/credits", func(c *gin.Context) {
 		handler.AdminAdjustUserCredits(c.Writer, c.Request, c.Param("id"))

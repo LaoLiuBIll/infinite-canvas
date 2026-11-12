@@ -1,15 +1,21 @@
-import { apiGet, apiPost } from "@/services/api/request";
+import { apiDelete, apiGet, apiPost } from "@/services/api/request";
 import type { UploadedFile } from "@/services/file-storage";
-import type { Asset, AssetPatch } from "@/stores/use-asset-store";
+import type { Asset, AssetCategory, AssetPatch } from "@/stores/use-asset-store";
 
 const path = "/api/v1/personal-assets";
+const categoriesPath = path + "/categories";
+
+type AssetCatalog = { categories: AssetCategory[]; assets: Asset[] };
 
 export type AssetReference = { id: string; name: string };
 
-export const fetchPersonalAssets = (token: string) => apiGet<Asset[]>(path, undefined, token);
-export const createPersonalAsset = (token: string, asset: Asset) => apiPost<Asset>(path, asset, token);
+export const fetchAssetCatalog = (token: string) => apiGet<AssetCatalog>(path + "/catalog", undefined, token);
+export const createPersonalAsset = (token: string, asset: Asset & { categoryId?: string }) => apiPost<Asset>(path, asset, token);
 export const editPersonalAssets = (token: string, ids: string[], patch: AssetPatch) => apiPost<Asset[]>(path + "/edit", { ids, patch }, token);
 export const fetchAssetReferences = (token: string, id: string) => apiGet<AssetReference[]>(path + "/references", { id }, token);
+
+export const saveAssetCategory = (token: string, name: string, id?: string) => apiPost<AssetCatalog>(categoriesPath, { id, name }, token);
+export const deleteAssetCategory = (token: string, id: string) => apiDelete<AssetCatalog>(categoriesPath + "/" + encodeURIComponent(id), token);
 
 export function uploadPersonalAssetFile(token: string, blob: Blob, filename: string, progress?: (percent: number) => void) {
     return new Promise<UploadedFile>((resolve, reject) => {

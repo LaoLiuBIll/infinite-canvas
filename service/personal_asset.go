@@ -18,18 +18,19 @@ import (
 var personalAssetID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type PersonalAssetFields struct {
-	ID        string   `json:"id"`
-	Kind      string   `json:"kind"`
-	Title     string   `json:"title"`
-	Category  string   `json:"category"`
-	Folder    string   `json:"folder"`
-	SKU       string   `json:"sku"`
-	Stage     string   `json:"stage"`
-	Source    string   `json:"source"`
-	Tags      []string `json:"tags"`
-	CreatedAt string   `json:"createdAt"`
-	UpdatedAt string   `json:"updatedAt"`
-	Data      struct {
+	ID         string   `json:"id"`
+	Kind       string   `json:"kind"`
+	Title      string   `json:"title"`
+	Category   string   `json:"category"`
+	CategoryID *string  `json:"categoryId"`
+	Folder     string   `json:"folder"`
+	SKU        string   `json:"sku"`
+	Stage      string   `json:"stage"`
+	Source     string   `json:"source"`
+	Tags       []string `json:"tags"`
+	CreatedAt  string   `json:"createdAt"`
+	UpdatedAt  string   `json:"updatedAt"`
+	Data       struct {
 		StorageKey string `json:"storageKey"`
 		URL        string `json:"url"`
 		DataURL    string `json:"dataUrl"`
@@ -82,42 +83,39 @@ func CurrentPersonalAssets(ctx context.Context) ([]json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	records, err := repository.ListPersonalAssets(owner)
-	if err != nil {
+	if err := importLegacyPersonalAssets(owner); err != nil {
 		return nil, err
 	}
+	records, err := repository.ListPersonalAssets(owner)
+	return personalAssetData(records), err
+}
+
+func importLegacyPersonalAssets(owner string) error {
 	snapshot, err := repository.LegacyPersonalAssetData(owner)
-	if err != nil {
-		return nil, err
+	if err != nil || snapshot == "" {
+		return err
 	}
 	var legacy struct{ Assets []json.RawMessage }
-	if snapshot != "" {
-		_ = json.Unmarshal([]byte(snapshot), &legacy)
+	if json.Unmarshal([]byte(snapshot), &legacy) != nil || len(legacy.Assets) == 0 {
+		return nil
 	}
-	if len(legacy.Assets) > 0 {
-		known := make(map[string]bool, len(records))
-		for _, record := range records {
+	ids, err := repository.ListPersonalAssetIDs(owner)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		known[id] = true
+	}
+	var missing []model.PersonalAsset
+	for _, raw := range legacy.Assets {
+		record, _, parseErr := personalAssetRecord(owner, raw)
+		if parseErr == nil && !known[record.ID] {
+			missing = append(missing, record)
 			known[record.ID] = true
 		}
-		var missing []model.PersonalAsset
-		for _, raw := range legacy.Assets {
-			record, _, parseErr := personalAssetRecord(owner, raw)
-			if parseErr == nil && !known[record.ID] {
-				missing = append(missing, record)
-				known[record.ID] = true
-			}
-		}
-		if len(missing) > 0 {
-			if err := repository.CreatePersonalAssets(missing); err != nil {
-				return nil, err
-			}
-			records, err = repository.ListPersonalAssets(owner)
-			if err != nil {
-				return nil, err
-			}
-		}
 	}
-	return personalAssetData(records), nil
+	return repository.CreatePersonalAssets(missing)
 }
 
 func CreatePersonalAsset(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -135,18 +133,24 @@ func CreatePersonalAsset(ctx context.Context, raw json.RawMessage) (json.RawMess
 	var asset map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &asset)
 	delete(asset, "deletedAt")
+	delete(asset, "categoryId")
 	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	timestamp, _ := json.Marshal(updatedAt)
 	asset["createdAt"], asset["updatedAt"] = timestamp, timestamp
-	data, err := json.Marshal(asset)
-	if err != nil {
-		return nil, err
+	record, err = repository.CreateManagedPersonalAsset(record, fields.CategoryID, func(record *model.PersonalAsset, category *string) error {
+		if category != nil {
+			asset["category"], _ = json.Marshal(*category)
+		}
+		data, err := json.Marshal(asset)
+		if err != nil {
+			return err
+		}
+		record.Data, record.UpdatedAt = string(data), updatedAt
+		return nil
+	})
+	if errors.Is(err, repository.ErrPersonalAssetCategoryNotFound) {
+		return nil, safeMessageError{message: "分类已删除，请刷新后重试"}
 	}
-	record.Data, record.UpdatedAt = string(data), updatedAt
-	if err := repository.CreatePersonalAssets([]model.PersonalAsset{record}); err != nil {
-		return nil, err
-	}
-	record, err = repository.GetPersonalAsset(owner, record.ID)
 	return json.RawMessage(record.Data), err
 }
 
@@ -166,7 +170,7 @@ func UpdatePersonalAssets(ctx context.Context, ids []string, patch map[string]js
 		}
 	}
 	for key := range patch {
-		if !slices.Contains([]string{"title", "category", "folder", "sku", "stage", "tags", "kind", "data", "coverUrl", "source", "metadata", "trashed", "addTags"}, key) {
+		if !slices.Contains([]string{"title", "category", "categoryId", "folder", "sku", "stage", "tags", "kind", "data", "coverUrl", "source", "metadata", "trashed", "addTags"}, key) {
 			return nil, safeMessageError{message: "资产字段无效"}
 		}
 	}
@@ -177,7 +181,16 @@ func UpdatePersonalAssets(ctx context.Context, ids []string, patch map[string]js
 		}
 		delete(patch, "addTags")
 	}
-	records, err := repository.EditPersonalAssets(owner, ids, func(record *model.PersonalAsset) error {
+	var categoryID *string
+	if raw, exists := patch["categoryId"]; exists {
+		var id string
+		if err := json.Unmarshal(raw, &id); err != nil {
+			return nil, safeMessageError{message: "分类编号无效"}
+		}
+		categoryID = &id
+		delete(patch, "categoryId")
+	}
+	records, err := repository.EditPersonalAssets(owner, ids, categoryID, func(record *model.PersonalAsset, category *string) error {
 		var asset map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(record.Data), &asset); err != nil {
 			return err
@@ -200,6 +213,9 @@ func UpdatePersonalAssets(ctx context.Context, ids []string, patch map[string]js
 				continue
 			}
 			asset[key] = value
+		}
+		if category != nil {
+			asset["category"], _ = json.Marshal(*category)
 		}
 		if len(addedTags) > 0 {
 			var tags []string
@@ -229,6 +245,9 @@ func UpdatePersonalAssets(ctx context.Context, ids []string, patch map[string]js
 		*record = updated
 		return nil
 	})
+	if errors.Is(err, repository.ErrPersonalAssetCategoryNotFound) {
+		return nil, safeMessageError{message: "分类已删除，请刷新后重试"}
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, safeMessageError{message: "资产不存在或已不可用"}
 	}

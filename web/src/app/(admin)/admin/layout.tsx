@@ -1,6 +1,6 @@
 "use client";
 
-import { AuditOutlined, FileTextOutlined, HomeOutlined, LogoutOutlined, PictureOutlined, SettingOutlined, ToolOutlined, TransactionOutlined, UserOutlined } from "@ant-design/icons";
+import { AuditOutlined, FolderOpenOutlined, FileTextOutlined, HomeOutlined, LogoutOutlined, PictureOutlined, SettingOutlined, ToolOutlined, TransactionOutlined, UserOutlined } from "@ant-design/icons";
 import { Button, Flex, Layout, Menu, Typography, theme } from "antd";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -13,6 +13,7 @@ import { useUserStore } from "@/stores/use-user-store";
 
 const adminMenus = [
     { key: "/admin/users", icon: <UserOutlined />, label: "用户管理" },
+    { key: "/admin/user-content", icon: <FolderOpenOutlined />, label: "用户内容" },
     { key: "/admin/credit-logs", icon: <TransactionOutlined />, label: "算力点日志" },
     { key: "/admin/ai-logs", icon: <AuditOutlined />, label: "AI 日志" },
     { key: "/admin/prompts", icon: <FileTextOutlined />, label: "提示词管理" },
@@ -29,22 +30,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     const user = useUserStore((state) => state.user);
     const isReady = useUserStore((state) => state.isReady);
     const logout = useUserStore((state) => state.clearSession);
-    const activeKey = pathname.startsWith("/admin/settings")
-        ? "/admin/settings"
-        : pathname.startsWith("/admin/assets")
-          ? "/admin/assets"
-          : pathname.startsWith("/admin/skills")
-            ? "/admin/skills"
-            : pathname.startsWith("/admin/prompts")
-              ? "/admin/prompts"
-              : pathname.startsWith("/admin/ai-logs")
-                ? "/admin/ai-logs"
-                : pathname.startsWith("/admin/credit-logs")
-                  ? "/admin/credit-logs"
-                  : pathname.startsWith("/admin/users")
-                    ? "/admin/users"
-                    : "";
-    const pageTitle = pathname.startsWith("/admin/settings") ? "系统设置" : pathname.startsWith("/admin/assets") ? "素材库管理" : pathname.startsWith("/admin/skills") ? "Skill 管理" : pathname.startsWith("/admin/prompts") ? "提示词管理" : pathname.startsWith("/admin/ai-logs") ? "AI 日志" : pathname.startsWith("/admin/credit-logs") ? "算力点日志" : "用户管理";
+    const activeMenu = adminMenus.find(({ key }) => pathname === key || pathname.startsWith(key + "/"));
+    const activeKey = activeMenu?.key || "";
+    const pageTitle = activeKey === "/admin/assets" ? "素材库管理" : activeMenu?.label || "用户管理";
 
     useEffect(() => {
         if (!isReady) return;

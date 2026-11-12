@@ -1,21 +1,21 @@
 "use client";
 
-import { ChevronDown, Upload } from "lucide-react";
+import { Upload } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
-import { App, AutoComplete, Button, Form, Input, Modal, Select, Space, Tag, Typography } from "antd";
+import { App, Button, Form, Input, Modal, Select, Space, Tag, Typography } from "antd";
 
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { uploadAssetMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
-import { assetStages } from "@/services/personal-asset-media";
-import { useAssetStore, type Asset, type AssetKind, type AudioAsset, type ImageAsset, type VideoAsset } from "@/stores/use-asset-store";
+import { assetMediaUrl, assetStages } from "@/services/personal-asset-media";
+import { categoryKey, useAssetStore, type Asset, type AssetKind, type AudioAsset, type ImageAsset, type VideoAsset } from "@/stores/use-asset-store";
 
 type AssetFormValues = {
     kind: AssetKind;
     title: string;
     coverUrl: string;
     tags: string[];
-    category?: string;
+    categoryId?: string;
     sku?: string;
     folder?: string;
     stage?: Asset["stage"];
@@ -29,16 +29,17 @@ type MediaDraft = VideoAsset["data"] | AudioAsset["data"] | null;
 type AssetFormModalProps = {
     open: boolean;
     asset?: Asset | null;
+    initialCategoryId?: string;
     onClose: () => void;
 };
 
-export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalProps) {
+export function AssetFormModal({ open, asset = null, initialCategoryId = "", onClose }: AssetFormModalProps) {
     const { message } = App.useApp();
     const [form] = Form.useForm<AssetFormValues>();
     const coverInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const mediaInputRef = useRef<HTMLInputElement>(null);
-    const assets = useAssetStore((state) => state.assets);
+    const categories = useAssetStore((state) => state.categories);
     const addAsset = useAssetStore((state) => state.addAsset);
     const updateAsset = useAssetStore((state) => state.updateAsset);
     const [saving, setSaving] = useState(false);
@@ -61,14 +62,14 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
             title: asset.title,
             coverUrl: asset.coverUrl,
             tags: asset.tags || [],
-            category: asset.category,
+            categoryId: useAssetStore.getState().categories.find((item) => categoryKey(item.name) === categoryKey(asset.category))?.id ?? (asset.category ? undefined : ""),
             sku: asset.sku,
             folder: asset.folder ?? asset.category,
             stage: asset.stage,
             source: asset.source,
             content: asset.kind === "text" ? asset.data.content : asset.kind === "image" ? asset.data.dataUrl : asset.data.url,
-        } : { kind: "text", title: "", coverUrl: "", tags: [], category: "", source: "手动添加", content: "" });
-    }, [asset, form, open]);
+        } : { kind: "text", title: "", coverUrl: "", tags: [], categoryId: initialCategoryId, source: "手动添加", content: "" });
+    }, [asset, form, initialCategoryId, open]);
 
     const saveAsset = async () => {
         const values = await form.validateFields();
@@ -76,7 +77,7 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
             title: values.title.trim(),
             coverUrl: values.coverUrl?.trim() || (values.kind === "image" && imageDraft ? imageDraft.dataUrl : ""),
             tags: values.tags || [],
-            category: values.category?.trim(),
+            categoryId: values.categoryId,
             sku: values.sku?.trim() || "",
             folder: values.folder?.trim() || "",
             stage: values.stage || undefined,
@@ -84,7 +85,9 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
             metadata: asset?.metadata || { source: "manual" },
         };
 
-        if (values.kind === "text") {
+        if (asset && asset.kind === values.kind && asset.kind !== "text" && assetMediaUrl(asset) === (values.content || "").trim()) {
+            await updateAsset(asset.id, base);
+        } else if (values.kind === "text") {
             const nextAsset = { ...base, kind: "text" as const, data: { content: (values.content || "").trim() } };
             await (asset ? updateAsset(asset.id, nextAsset) : addAsset(nextAsset));
         } else if (values.kind === "image") {
@@ -102,7 +105,9 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
                     bitmap.close();
                 } catch {}
             }
-            const nextAsset = { ...base, coverUrl: base.coverUrl || data.dataUrl, kind: "image" as const, data };
+            const originalURL = asset?.kind === "image" ? asset.data.dataUrl : "";
+            const nextCover = !base.coverUrl || base.coverUrl === originalURL ? data.dataUrl : base.coverUrl;
+            const nextAsset = { ...base, coverUrl: nextCover, kind: "image" as const, data };
             await (asset ? updateAsset(asset.id, nextAsset) : addAsset(nextAsset));
         } else if (values.kind === "video") {
             const url = (values.content || "").trim();
@@ -189,9 +194,9 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
                         <Form.Item name="title" label="标题" rules={[{ required: true, message: "请输入标题" }]}>
                             <Input size="large" placeholder="给素材起一个容易检索的名字" />
                         </Form.Item>
-                        <Form.Item name="coverUrl" label="封面 URL">
+                        <Form.Item label="封面 URL">
                             <Space.Compact className="w-full">
-                                <Input placeholder="可粘贴图片 URL，也可以上传本地封面" />
+                                <Form.Item name="coverUrl" noStyle><Input aria-label="封面 URL" placeholder="可粘贴图片 URL，也可以上传本地封面" /></Form.Item>
                                 <Button icon={<Upload className="size-3.5" />} onClick={() => coverInputRef.current?.click()}>
                                     上传
                                 </Button>
@@ -206,8 +211,8 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
                             <Select mode="tags" tokenSeparators={[",", "，"]} placeholder="输入标签后回车" />
                         </Form.Item>
                         <div className="grid gap-4 sm:grid-cols-2">
-                            <Form.Item name="category" label="分类">
-                                <AutoComplete allowClear suffixIcon={<ChevronDown className="size-3.5" />} options={Array.from(new Set(assets.flatMap((item) => item.category ? [item.category] : []))).map((value) => ({ value }))} placeholder="选择或输入分类" />
+                            <Form.Item name="categoryId" label="分类">
+                                <Select showSearch={{ optionFilterProp: "label" }} placeholder={asset?.category || "选择分类"} options={[{ value: "", label: "未分类" }, ...categories.map((item) => ({ value: item.id, label: item.name }))]} />
                             </Form.Item>
                             <Form.Item name="source" label="来源">
                                 <Input placeholder="手动添加 / 画布 / 素材库" />
@@ -218,10 +223,13 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
                                 <Input.TextArea rows={8} placeholder="保存提示词、说明文案、参考描述等文本素材" />
                             </Form.Item>
                         ) : (
-                            <Form.Item name="content" label={formKind === "image" ? "图片内容" : formKind === "video" ? "视频内容" : "音频内容"} required>
+                            <Form.Item label={formKind === "image" ? "图片内容" : formKind === "video" ? "视频内容" : "音频内容"} required>
                                 <div className="rounded-lg border border-dashed border-stone-300 p-4 dark:border-stone-700">
                                     <Space.Compact className="w-full">
-                                        <Input placeholder={formKind === "image" ? "填写图片 URL，或选择本地图片文件" : formKind === "video" ? "填写视频 URL，或选择本地视频文件" : "填写音频 URL，或选择本地音频文件"} />
+                                        <Form.Item name="content" noStyle>
+                                            <Input aria-label="媒体 URL" placeholder={formKind === "image" ? "填写图片 URL，或选择本地图片文件" : formKind === "video" ? "填写视频 URL，或选择本地视频文件" : "填写音频 URL，或选择本地音频文件"}
+                                                onChange={() => { setImageDraft(null); setMediaDraft(null); }} />
+                                        </Form.Item>
                                         <Button icon={<Upload className="size-4" />} onClick={() => (formKind === "image" ? imageInputRef.current?.click() : mediaInputRef.current?.click())}>
                                             上传
                                         </Button>

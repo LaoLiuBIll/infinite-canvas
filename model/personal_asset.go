@@ -8,3 +8,10 @@ type PersonalAsset struct {
 	StorageKey string `gorm:"size:191;index"`
 	UpdatedAt  string `gorm:"size:64;index:idx_personal_assets_user_updated,priority:2"`
 }
+
+// PersonalAssetCategory stores an account's categories, including empty ones.
+type PersonalAssetCategory struct {
+	UserID string `json:"-" gorm:"size:64;primaryKey"`
+	ID     string `json:"id" gorm:"size:64;primaryKey"`
+	Name   string `json:"name" gorm:"size:100;not null"`
+}

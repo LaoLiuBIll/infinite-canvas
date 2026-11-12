@@ -75,3 +75,39 @@ func UploadPersonalAssetFile(w http.ResponseWriter, r *http.Request) {
 	}
 	OK(w, data)
 }
+
+func PersonalAssetCatalog(w http.ResponseWriter, r *http.Request) {
+	result, err := service.PersonalAssetCategories(r.Context())
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	OK(w, result)
+}
+
+func SavePersonalAssetCategory(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&request) != nil {
+		Fail(w, "分类信息无效")
+		return
+	}
+	result, err := service.SavePersonalAssetCategory(r.Context(), request.ID, request.Name)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
+}
+
+func DeletePersonalAssetCategory(w http.ResponseWriter, r *http.Request, id string) {
+	result, err := service.DeletePersonalAssetCategory(r.Context(), id)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
+}

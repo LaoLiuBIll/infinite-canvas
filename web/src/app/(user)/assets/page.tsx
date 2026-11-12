@@ -1,17 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, App, Button, Checkbox, Drawer, Empty, Input, Modal, Pagination, Progress, Segmented, Select, Spin, Tag } from "antd";
-import { AudioLines, Download, FileText, Film, FolderOpen, LayoutGrid, List, Plus, RotateCcw, Search, Trash2, Upload } from "lucide-react";
+import { AudioLines, Download, FileText, Film, FolderOpen, LayoutGrid, List, Plus, RotateCcw, Search, Settings2, Trash2, Upload } from "lucide-react";
 import { saveAs } from "file-saver";
 import { nanoid } from "nanoid";
 
+import { AssetDetails } from "@/components/assets/asset-details";
 import { AssetFormModal } from "@/components/assets/asset-form-modal";
-import { formatBytes } from "@/lib/image-utils";
-import { fetchAssetReferences, type AssetReference } from "@/services/api/personal-assets";
-import { assetFromFile, assetKinds, assetMediaUrl, assetNeedsOriginalDevice, assetSearchText, assetStages, isAssetRecoverable, readAssetMedia } from "@/services/personal-asset-media";
-import { useAssetStore, type Asset, type AssetInput, type AssetPatch } from "@/stores/use-asset-store";
+import { assetFromFile, assetKinds, assetNeedsOriginalDevice, assetSearchText, assetStages, isAssetRecoverable, readAssetMedia } from "@/services/personal-asset-media";
+import { categoryKey, useAssetStore, type Asset, type AssetInput, type AssetPatch } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 
@@ -31,6 +29,7 @@ export default function AssetsPage() {
     const assets = useAssetStore((state) => state.assets);
     const deleted = useAssetStore((state) => state.trash);
     const trash = useMemo(() => deleted.filter(isAssetRecoverable), [deleted]);
+    const categories = useAssetStore((state) => state.categories);
     const loading = useAssetStore((state) => state.loading);
     const loadError = useAssetStore((state) => state.loadError);
     const guestAssets = useAssetStore((state) => state.guestAssets);
@@ -39,6 +38,8 @@ export default function AssetsPage() {
     const [keyword, setKeyword] = useState("");
     const [kind, setKind] = useState<string>();
     const [sku, setSKU] = useState<string>();
+    const [categoryID, setCategoryID] = useState<string>();
+    const selectedCategory = categories.find((item) => item.id === categoryID);
     const [folder, setFolder] = useState<string>();
     const [source, setSource] = useState<string>();
     const [tags, setTags] = useState<string[]>([]);
@@ -64,9 +65,10 @@ export default function AssetsPage() {
         return rows.filter((asset) =>
             (!query || assetSearchText(asset).includes(query)) && (!kind || asset.kind === kind) &&
             (!sku || asset.sku === sku) && (!folder || folderOf(asset) === folder) &&
+            (categoryID === "" ? !categoryKey(asset.category) : !selectedCategory || categoryKey(asset.category) === categoryKey(selectedCategory.name)) &&
             (!source || asset.source === source) && (!stage || asset.stage === stage) &&
             tags.every((tag) => asset.tags?.includes(tag)) && (!cutoff || Date.parse(asset.createdAt) >= cutoff));
-    }, [rows, keyword, kind, sku, folder, source, stage, tags, period]);
+    }, [rows, keyword, kind, sku, folder, source, stage, tags, period, categoryID, selectedCategory]);
     const maxPage = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const visible = filtered.slice((Math.min(page, maxPage) - 1) * PAGE_SIZE, Math.min(page, maxPage) * PAGE_SIZE);
     const chosen = filtered.filter((asset) => selected.includes(asset.id));
@@ -78,7 +80,7 @@ export default function AssetsPage() {
     useEffect(() => {
         setPage(1);
         setSelected([]);
-    }, [view, keyword, kind, sku, folder, source, stage, tags, period]);
+    }, [view, keyword, kind, sku, folder, source, stage, tags, period, categoryID]);
 
     const changeSelection = (id: string, checked: boolean) => setSelected((items) => checked ? [...new Set([...items, id])] : items.filter((item) => item !== id));
 
@@ -220,6 +222,7 @@ export default function AssetsPage() {
                         <p className="mt-1 text-sm text-muted-foreground">{token ? "按款号管理素材，在画布和工作台中复用。" : "当前素材保存在此浏览器。登录后可保存到账号并跨设备使用。"}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                        <Button href="/assets/manage" icon={<Settings2 size={15} />}>资产管理</Button>
                         <Button href="/asset-library">公共素材库</Button>
                         <Button loading={busy} onClick={() => zipRef.current?.click()}>导入 ZIP</Button>
                         <Button icon={<Plus size={15} />} onClick={() => setEditing(null)}>新增单项</Button>
@@ -239,6 +242,7 @@ export default function AssetsPage() {
                     <Input aria-label="搜索资产" className="max-w-[260px]" allowClear prefix={<Search size={15} />} placeholder="搜索名称、款号、文案" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
                     <Select aria-label="类型" className="min-w-26" allowClear placeholder="类型" options={[...assetKinds]} value={kind} onChange={setKind} />
                     <Select aria-label="完整款号" className="min-w-34" showSearch allowClear placeholder="完整款号" options={valuesOf(rows.map((asset) => asset.sku))} value={sku} onChange={setSKU} />
+                    <Select aria-label="分类" className="min-w-28" showSearch={{ optionFilterProp: "label" }} allowClear placeholder="分类" options={[{ value: "", label: "未分类" }, ...categories.map((item) => ({ value: item.id, label: item.name }))]} value={categoryID} onChange={setCategoryID} />
                     <Select aria-label="文件夹" className="min-w-28" showSearch allowClear placeholder="文件夹" options={valuesOf(rows.map(folderOf))} value={folder} onChange={setFolder} />
                     <Select aria-label="来源" className="min-w-26" allowClear placeholder="来源" options={valuesOf(rows.map((asset) => asset.source))} value={source} onChange={setSource} />
                     <Select aria-label="用途" className="min-w-26" allowClear placeholder="用途" options={[...assetStages]} value={stage} onChange={setStage} />
@@ -290,7 +294,7 @@ export default function AssetsPage() {
                 {maxPage > 1 && <Pagination className="mt-5 justify-end" current={Math.min(page, maxPage)} total={filtered.length} pageSize={PAGE_SIZE} showSizeChanger={false} onChange={setPage} />}
             </div>
 
-            <AssetFormModal open={editing !== undefined} asset={editing} onClose={() => setEditing(undefined)} />
+            <AssetFormModal initialCategoryId={selectedCategory?.id} open={editing !== undefined} asset={editing} onClose={() => setEditing(undefined)} />
 
             <Drawer title={activeDetail?.title} open={Boolean(activeDetail)} onClose={() => setDetail(null)} size={490} destroyOnHidden>
                 {activeDetail && <>
@@ -361,47 +365,4 @@ function AssetCover({ asset }: { asset: Asset }) {
     if (asset.kind === "audio") return <AudioLines size={26} />;
     if (asset.kind === "text") return <span className="line-clamp-4 px-4 text-sm">{asset.data.content}</span>;
     return <FileText size={26} />;
-}
-
-function AssetDetails({ asset, token }: { asset: Asset; token: string }) {
-    const [refs, setRefs] = useState<AssetReference[]>([]);
-    const [refError, setRefError] = useState(false);
-    const [checkingRefs, setCheckingRefs] = useState(Boolean(token));
-    const [mediaError, setMediaError] = useState(false);
-    const url = assetMediaUrl(asset);
-    useEffect(() => {
-        let active = true;
-        if (token) fetchAssetReferences(token, asset.id).then((items) => { if (active) setRefs(items); }).catch(() => { if (active) setRefError(true); }).finally(() => { if (active) setCheckingRefs(false); });
-        return () => { active = false; };
-    }, [asset.id, token]);
-    useEffect(() => setMediaError(false), [url]);
-    const data = asset.kind === "text" ? null : asset.data;
-    return (
-        <div className="space-y-4">
-            <div className="overflow-hidden rounded-lg border border-border bg-muted p-2">
-                {asset.kind === "text" && <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-2 text-sm">{asset.data.content}</pre>}
-                {asset.kind === "image" && url && <img alt={asset.title} className="mx-auto max-h-72 object-contain" src={url} onError={() => setMediaError(true)} />}
-                {asset.kind === "video" && url && <video aria-label={asset.title} className="w-full" src={url} controls preload="metadata" onError={() => setMediaError(true)} />}
-                {asset.kind === "audio" && url && <audio aria-label={asset.title} className="w-full" src={url} controls preload="metadata" onError={() => setMediaError(true)} />}
-                {(mediaError || (data && !url)) && <p className="p-2 text-sm text-destructive">原文件暂不可读。旧本地素材可在原设备补传。</p>}
-            </div>
-            <dl className="grid grid-cols-[6rem_1fr] gap-y-2 text-sm">
-                {[
-                    ["类型", kindText(asset)], ["款号", asset.sku], ["文件夹", folderOf(asset)], ["用途", stageText(asset)],
-                    ["来源", asset.source], ["标签", asset.tags?.join("、")], ["入库时间", dateText(asset.createdAt)],
-                    ["文件大小", data?.bytes ? formatBytes(data.bytes) : ""],
-                    ["尺寸", data && "width" in data && data.width ? `${data.width} × ${data.height}` : ""],
-                    ["时长", data && "durationMs" in data && data.durationMs ? `${(data.durationMs / 1000).toFixed(1)} 秒` : ""],
-                    ["参考素材", Array.isArray(asset.metadata?.references) ? asset.metadata.references.filter((value) => typeof value === "string").join("、") : ""],
-                    ["模型", typeof asset.metadata?.model === "string" ? asset.metadata.model : ""],
-                    ["提示词或文案", typeof asset.metadata?.prompt === "string" ? asset.metadata.prompt : ""],
-                ].filter(([, value]) => value).map(([label, value]) => <div className="contents" key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-words">{value}</dd></div>)}
-            </dl>
-            {token && <section className="border-t border-border pt-3">
-                <h2 className="mb-2 font-medium">关联画布</h2>
-                {refs.length ? <ul>{refs.map((ref) => <li key={ref.id}><Link className="text-primary underline" href={`/canvas/${encodeURIComponent(ref.id)}`}>{ref.name || ref.id}</Link></li>)}</ul>
-                    : <p className="text-sm text-muted-foreground">{checkingRefs ? "正在检查画布引用…" : refError ? "未能读取画布引用" : "暂无画布引用"}</p>}
-            </section>}
-        </div>
-    );
 }
